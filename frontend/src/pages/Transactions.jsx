@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   Plus,
@@ -11,6 +11,7 @@ import {
   Calendar
 } from 'lucide-react';
 import usePortfolioStore from '../store/portfolioStore';
+import api from '../services/api';
 
 const formatCurrency = (value) => {
   return new Intl.NumberFormat('en-US', {
@@ -21,11 +22,25 @@ const formatCurrency = (value) => {
 
 const formatDate = (dateStr) => {
   // Parse the date string directly to avoid timezone issues
-  // Expected format: "YYYY-MM-DD" or ISO string
-  const dateOnly = dateStr.split('T')[0]; // Get just the date part
+  const dateOnly = dateStr.split('T')[0];
   const [year, month, day] = dateOnly.split('-');
   const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
   return `${months[parseInt(month) - 1]} ${parseInt(day)}, ${year}`;
+};
+
+// Debounce hook
+const useDebounce = (value, delay) => {
+  const [debouncedValue, setDebouncedValue] = useState(value);
+  
+  useEffect(() => {
+    const handler = setTimeout(() => {
+      setDebouncedValue(value);
+    }, delay);
+    
+    return () => clearTimeout(handler);
+  }, [value, delay]);
+  
+  return debouncedValue;
 };
 
 export default function Transactions() {
@@ -46,10 +61,46 @@ export default function Transactions() {
   });
   const [formError, setFormError] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  
+  // Ticker search state
+  const [symbolSearch, setSymbolSearch] = useState('');
+  const [searchResults, setSearchResults] = useState([]);
+  const [isSearching, setIsSearching] = useState(false);
+  const [showSearchResults, setShowSearchResults] = useState(false);
+  
+  const debouncedSearch = useDebounce(symbolSearch, 500);
 
   useEffect(() => {
     fetchTransactions();
   }, []);
+
+  // Search for symbols when input changes
+  useEffect(() => {
+    const searchSymbols = async () => {
+      if (debouncedSearch.length < 1) {
+        setSearchResults([]);
+        return;
+      }
+      
+      setIsSearching(true);
+      try {
+        const response = await api.get(`/assets/search?query=${encodeURIComponent(debouncedSearch)}`);
+        setSearchResults(response.data.results || []);
+      } catch (error) {
+        console.error('Symbol search error:', error);
+        setSearchResults([]);
+      }
+      setIsSearching(false);
+    };
+    
+    searchSymbols();
+  }, [debouncedSearch]);
+
+  const handleSymbolSelect = (symbol, name) => {
+    setFormData({ ...formData, symbol: symbol });
+    setSymbolSearch(symbol);
+    setShowSearchResults(false);
+  };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -77,6 +128,8 @@ export default function Transactions() {
         transactionDate: new Date().toISOString().split('T')[0],
         notes: ''
       });
+      setSymbolSearch('');
+      setSearchResults([]);
     } else {
       setFormError(result.error);
     }
@@ -224,175 +277,206 @@ export default function Transactions() {
       {/* Add Transaction Modal */}
       <AnimatePresence>
         {showModal && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-            <motion.div
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              onClick={() => setShowModal(false)}
-              className="absolute inset-0 bg-black/60 backdrop-blur-sm"
-            />
-            <motion.div
-              initial={{ opacity: 0, scale: 0.95, y: 20 }}
-              animate={{ opacity: 1, scale: 1, y: 0 }}
-              exit={{ opacity: 0, scale: 0.95, y: 20 }}
-              className="relative w-full max-w-lg glass-card-elevated overflow-auto max-h-[90vh]"
-            >
-              <div className="p-6 border-b border-midnight-700/50 flex items-center justify-between">
-                <h2 className="text-xl font-display font-bold text-white">Add Transaction</h2>
-                <button
-                  onClick={() => setShowModal(false)}
-                  className="p-2 rounded-lg hover:bg-midnight-700/50 transition-colors"
-                >
-                  <X className="w-5 h-5 text-midnight-400" />
-                </button>
-              </div>
-
-              <form onSubmit={handleSubmit} className="p-6 space-y-5">
-                {formError && (
-                  <div className="p-4 bg-loss/10 border border-loss/20 rounded-xl text-loss text-sm">
-                    {formError}
-                  </div>
-                )}
-
-                {/* Transaction Type Toggle */}
-                <div className="grid grid-cols-2 gap-2 p-1 bg-midnight-800/50 rounded-xl">
-                  {['BUY', 'SELL'].map((type) => (
-                    <button
-                      key={type}
-                      type="button"
-                      onClick={() => setFormData({ ...formData, transactionType: type })}
-                      className={`py-3 rounded-lg font-medium transition-all ${
-                        formData.transactionType === type
-                          ? type === 'BUY'
-                            ? 'bg-gain text-white'
-                            : 'bg-loss text-white'
-                          : 'text-midnight-400 hover:text-midnight-200'
-                      }`}
-                    >
-                      {type}
-                    </button>
-                  ))}
+          <div className="fixed inset-0 z-50 overflow-y-auto">
+            <div className="min-h-full flex items-center justify-center p-4">
+              <motion.div
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                onClick={() => setShowModal(false)}
+                className="fixed inset-0 bg-black/60 backdrop-blur-sm"
+              />
+              <motion.div
+                initial={{ opacity: 0, scale: 0.95, y: 20 }}
+                animate={{ opacity: 1, scale: 1, y: 0 }}
+                exit={{ opacity: 0, scale: 0.95, y: 20 }}
+                className="relative w-full max-w-lg glass-card-elevated my-8"
+              >
+                <div className="p-6 border-b border-midnight-700/50 flex items-center justify-between">
+                  <h2 className="text-xl font-display font-bold text-white">Add Transaction</h2>
+                  <button
+                    onClick={() => setShowModal(false)}
+                    className="p-2 rounded-lg hover:bg-midnight-700/50 transition-colors"
+                  >
+                    <X className="w-5 h-5 text-midnight-400" />
+                  </button>
                 </div>
 
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <label className="block text-sm font-medium text-midnight-300">Symbol</label>
-                    <input
-                      type="text"
-                      value={formData.symbol}
-                      onChange={(e) => setFormData({ ...formData, symbol: e.target.value.toUpperCase() })}
-                      className="input-field"
-                      placeholder="AAPL"
-                      required
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <label className="block text-sm font-medium text-midnight-300">Asset Type</label>
-                    <select
-                      value={formData.assetType}
-                      onChange={(e) => setFormData({ ...formData, assetType: e.target.value })}
-                      className="input-field"
-                    >
-                      <option value="STOCK">Stock</option>
-                      <option value="CRYPTO">Crypto</option>
-                    </select>
-                  </div>
-                </div>
+                <form onSubmit={handleSubmit} className="p-6 space-y-5">
+                  {formError && (
+                    <div className="p-4 bg-loss/10 border border-loss/20 rounded-xl text-loss text-sm">
+                      {formError}
+                    </div>
+                  )}
 
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <label className="block text-sm font-medium text-midnight-300">Quantity</label>
-                    <input
-                      type="number"
-                      step="any"
-                      value={formData.quantity}
-                      onChange={(e) => setFormData({ ...formData, quantity: e.target.value })}
-                      className="input-field"
-                      placeholder="10"
-                      required
-                    />
+                  {/* Transaction Type Toggle */}
+                  <div className="grid grid-cols-2 gap-2 p-1 bg-midnight-800/50 rounded-xl">
+                    {['BUY', 'SELL'].map((type) => (
+                      <button
+                        key={type}
+                        type="button"
+                        onClick={() => setFormData({ ...formData, transactionType: type })}
+                        className={`py-3 rounded-lg font-medium transition-all ${
+                          formData.transactionType === type
+                            ? type === 'BUY'
+                              ? 'bg-gain text-white'
+                              : 'bg-loss text-white'
+                            : 'text-midnight-400 hover:text-midnight-200'
+                        }`}
+                      >
+                        {type}
+                      </button>
+                    ))}
                   </div>
-                  <div className="space-y-2">
-                    <label className="block text-sm font-medium text-midnight-300">Price per unit</label>
-                    <input
-                      type="number"
-                      step="any"
-                      value={formData.pricePerUnit}
-                      onChange={(e) => setFormData({ ...formData, pricePerUnit: e.target.value })}
-                      className="input-field"
-                      placeholder="150.00"
-                      required
-                    />
-                  </div>
-                </div>
 
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <label className="block text-sm font-medium text-midnight-300">Date</label>
-                    <input
-                      type="date"
-                      value={formData.transactionDate}
-                      onChange={(e) => setFormData({ ...formData, transactionDate: e.target.value })}
-                      className="input-field"
-                      required
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <label className="block text-sm font-medium text-midnight-300">Fees</label>
-                    <input
-                      type="number"
-                      step="any"
-                      value={formData.fees}
-                      onChange={(e) => setFormData({ ...formData, fees: e.target.value })}
-                      className="input-field"
-                      placeholder="0"
-                    />
-                  </div>
-                </div>
-
-                <div className="space-y-2">
-                  <label className="block text-sm font-medium text-midnight-300">Notes (optional)</label>
-                  <textarea
-                    value={formData.notes}
-                    onChange={(e) => setFormData({ ...formData, notes: e.target.value })}
-                    className="input-field resize-none"
-                    rows={2}
-                    placeholder="Add any notes..."
-                  />
-                </div>
-
-                {/* Total Preview */}
-                {formData.quantity && formData.pricePerUnit && (
-                  <div className="p-4 bg-midnight-800/50 rounded-xl">
-                    <div className="flex justify-between text-sm">
-                      <span className="text-midnight-400">Total Amount</span>
-                      <span className="font-mono font-semibold text-white">
-                        {formatCurrency(
-                          parseFloat(formData.quantity) * parseFloat(formData.pricePerUnit) +
-                          parseFloat(formData.fees || 0)
+                  <div className="grid grid-cols-2 gap-4">
+                    {/* Symbol Search */}
+                    <div className="space-y-2 relative">
+                      <label className="block text-sm font-medium text-midnight-300">Symbol</label>
+                      <div className="relative">
+                        <input
+                          type="text"
+                          value={symbolSearch || formData.symbol}
+                          onChange={(e) => {
+                            setSymbolSearch(e.target.value.toUpperCase());
+                            setFormData({ ...formData, symbol: e.target.value.toUpperCase() });
+                            setShowSearchResults(true);
+                          }}
+                          onFocus={() => setShowSearchResults(true)}
+                          className="input-field pr-10"
+                          placeholder="Search..."
+                          required
+                        />
+                        {isSearching && (
+                          <Loader2 className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-midnight-400 animate-spin" />
                         )}
-                      </span>
+                      </div>
+                      
+                      {/* Search Results Dropdown */}
+                      {showSearchResults && searchResults.length > 0 && (
+                        <div className="absolute z-10 top-full left-0 right-0 mt-1 bg-midnight-800 border border-midnight-600 rounded-xl shadow-xl max-h-48 overflow-y-auto">
+                          {searchResults.map((result, idx) => (
+                            <button
+                              key={idx}
+                              type="button"
+                              onClick={() => handleSymbolSelect(result.symbol, result.name)}
+                              className="w-full px-4 py-3 text-left hover:bg-midnight-700/50 transition-colors border-b border-midnight-700/50 last:border-0"
+                            >
+                              <p className="font-medium text-white">{result.symbol}</p>
+                              <p className="text-xs text-midnight-400 truncate">{result.name}</p>
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                    
+                    <div className="space-y-2">
+                      <label className="block text-sm font-medium text-midnight-300">Asset Type</label>
+                      <select
+                        value={formData.assetType}
+                        onChange={(e) => setFormData({ ...formData, assetType: e.target.value })}
+                        className="input-field"
+                      >
+                        <option value="STOCK">Stock</option>
+                        <option value="CRYPTO">Crypto</option>
+                      </select>
                     </div>
                   </div>
-                )}
 
-                <button
-                  type="submit"
-                  disabled={submitting}
-                  className="btn-primary w-full flex items-center justify-center gap-2"
-                >
-                  {submitting ? (
-                    <Loader2 className="w-5 h-5 animate-spin" />
-                  ) : (
-                    <>
-                      <Plus className="w-5 h-5" />
-                      Add {formData.transactionType === 'BUY' ? 'Buy' : 'Sell'} Transaction
-                    </>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <label className="block text-sm font-medium text-midnight-300">Quantity</label>
+                      <input
+                        type="number"
+                        step="any"
+                        value={formData.quantity}
+                        onChange={(e) => setFormData({ ...formData, quantity: e.target.value })}
+                        className="input-field"
+                        placeholder="10"
+                        required
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <label className="block text-sm font-medium text-midnight-300">Price per unit</label>
+                      <input
+                        type="number"
+                        step="any"
+                        value={formData.pricePerUnit}
+                        onChange={(e) => setFormData({ ...formData, pricePerUnit: e.target.value })}
+                        className="input-field"
+                        placeholder="150.00"
+                        required
+                      />
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <label className="block text-sm font-medium text-midnight-300">Date</label>
+                      <input
+                        type="date"
+                        value={formData.transactionDate}
+                        onChange={(e) => setFormData({ ...formData, transactionDate: e.target.value })}
+                        className="input-field"
+                        required
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <label className="block text-sm font-medium text-midnight-300">Fees</label>
+                      <input
+                        type="number"
+                        step="any"
+                        value={formData.fees}
+                        onChange={(e) => setFormData({ ...formData, fees: e.target.value })}
+                        className="input-field"
+                        placeholder="0"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="space-y-2">
+                    <label className="block text-sm font-medium text-midnight-300">Notes (optional)</label>
+                    <textarea
+                      value={formData.notes}
+                      onChange={(e) => setFormData({ ...formData, notes: e.target.value })}
+                      className="input-field resize-none"
+                      rows={2}
+                      placeholder="Add any notes..."
+                    />
+                  </div>
+
+                  {/* Total Preview */}
+                  {formData.quantity && formData.pricePerUnit && (
+                    <div className="p-4 bg-midnight-800/50 rounded-xl">
+                      <div className="flex justify-between text-sm">
+                        <span className="text-midnight-400">Total Amount</span>
+                        <span className="font-mono font-semibold text-white">
+                          {formatCurrency(
+                            parseFloat(formData.quantity) * parseFloat(formData.pricePerUnit) +
+                            parseFloat(formData.fees || 0)
+                          )}
+                        </span>
+                      </div>
+                    </div>
                   )}
-                </button>
-              </form>
-            </motion.div>
+
+                  <button
+                    type="submit"
+                    disabled={submitting}
+                    className="btn-primary w-full flex items-center justify-center gap-2"
+                  >
+                    {submitting ? (
+                      <Loader2 className="w-5 h-5 animate-spin" />
+                    ) : (
+                      <>
+                        <Plus className="w-5 h-5" />
+                        Add {formData.transactionType === 'BUY' ? 'Buy' : 'Sell'} Transaction
+                      </>
+                    )}
+                  </button>
+                </form>
+              </motion.div>
+            </div>
           </div>
         )}
       </AnimatePresence>

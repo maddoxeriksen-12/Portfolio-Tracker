@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Plus, CreditCard, Calendar, Trash2, X, Loader2, ChevronDown, PieChart } from 'lucide-react';
+import { Plus, CreditCard, Calendar, Trash2, X, Loader2, ChevronDown, PieChart, RefreshCw } from 'lucide-react';
 import { PieChart as RechartsPie, Pie, Cell, ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip } from 'recharts';
 import usePortfolioStore from '../store/portfolioStore';
 import api from '../services/api';
@@ -21,6 +21,14 @@ const formatDate = (dateStr) => {
   const [year, month, day] = dateOnly.split('-');
   return `${months[parseInt(month) - 1]} ${parseInt(day)}, ${year}`;
 };
+
+const recurringOptions = [
+  { value: 'WEEKLY', label: 'Weekly' },
+  { value: 'BI_WEEKLY', label: 'Bi-Weekly' },
+  { value: 'MONTHLY', label: 'Monthly' },
+  { value: 'QUARTERLY', label: 'Quarterly' },
+  { value: 'ANNUALLY', label: 'Annually' }
+];
 
 export default function Expenses() {
   const { expenses, fetchExpenses, createExpense, deleteExpense } = usePortfolioStore();
@@ -77,7 +85,8 @@ export default function Expenses() {
     const result = await createExpense({
       ...formData,
       amount: parseFloat(formData.amount),
-      categoryId: formData.categoryId || null
+      categoryId: formData.categoryId || null,
+      recurringFrequency: formData.isRecurring ? formData.recurringFrequency : null
     });
 
     setSubmitting(false);
@@ -335,6 +344,7 @@ export default function Expenses() {
                 <th className="table-header px-6 py-4">Date</th>
                 <th className="table-header px-6 py-4">Description</th>
                 <th className="table-header px-6 py-4">Category</th>
+                <th className="table-header px-6 py-4">Recurring</th>
                 <th className="table-header px-6 py-4 text-right">Amount</th>
                 <th className="table-header px-6 py-4 text-right">Actions</th>
               </tr>
@@ -370,6 +380,16 @@ export default function Expenses() {
                       {expense.categoryName}
                     </span>
                   </td>
+                  <td className="table-cell px-6">
+                    {expense.isRecurring ? (
+                      <span className="inline-flex items-center gap-1 text-xs font-medium text-accent-400 bg-accent-500/10 px-2 py-1 rounded-lg">
+                        <RefreshCw className="w-3 h-3" />
+                        {recurringOptions.find(o => o.value === expense.recurringFrequency)?.label || expense.recurringFrequency}
+                      </span>
+                    ) : (
+                      <span className="text-midnight-500 text-sm">—</span>
+                    )}
+                  </td>
                   <td className="table-cell px-6 text-right font-mono font-medium text-loss">
                     -{formatCurrency(expense.amount)}
                   </td>
@@ -385,7 +405,7 @@ export default function Expenses() {
               ))}
               {(!expenses || expenses.length === 0) && (
                 <tr>
-                  <td colSpan={5} className="px-6 py-12 text-center text-midnight-400">
+                  <td colSpan={6} className="px-6 py-12 text-center text-midnight-400">
                     No expenses for {months[selectedMonth - 1]} {selectedYear}
                   </td>
                 </tr>
@@ -398,115 +418,167 @@ export default function Expenses() {
       {/* Add Expense Modal */}
       <AnimatePresence>
         {showModal && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-            <motion.div
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              onClick={() => setShowModal(false)}
-              className="absolute inset-0 bg-black/60 backdrop-blur-sm"
-            />
-            <motion.div
-              initial={{ opacity: 0, scale: 0.95, y: 20 }}
-              animate={{ opacity: 1, scale: 1, y: 0 }}
-              exit={{ opacity: 0, scale: 0.95, y: 20 }}
-              className="relative w-full max-w-lg glass-card-elevated overflow-auto max-h-[90vh]"
-            >
-              <div className="p-6 border-b border-midnight-700/50 flex items-center justify-between">
-                <h2 className="text-xl font-display font-bold text-white">Add Expense</h2>
-                <button
-                  onClick={() => setShowModal(false)}
-                  className="p-2 rounded-lg hover:bg-midnight-700/50 transition-colors"
-                >
-                  <X className="w-5 h-5 text-midnight-400" />
-                </button>
-              </div>
-
-              <form onSubmit={handleSubmit} className="p-6 space-y-5">
-                {formError && (
-                  <div className="p-4 bg-loss/10 border border-loss/20 rounded-xl text-loss text-sm">
-                    {formError}
-                  </div>
-                )}
-
-                <div className="space-y-2">
-                  <label className="block text-sm font-medium text-midnight-300">Description</label>
-                  <input
-                    type="text"
-                    value={formData.description}
-                    onChange={(e) => setFormData({ ...formData, description: e.target.value })}
-                    className="input-field"
-                    placeholder="e.g., Grocery shopping"
-                    required
-                  />
-                </div>
-
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <label className="block text-sm font-medium text-midnight-300">Amount</label>
-                    <input
-                      type="number"
-                      step="any"
-                      value={formData.amount}
-                      onChange={(e) => setFormData({ ...formData, amount: e.target.value })}
-                      className="input-field"
-                      placeholder="50.00"
-                      required
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <label className="block text-sm font-medium text-midnight-300">Date</label>
-                    <input
-                      type="date"
-                      value={formData.expenseDate}
-                      onChange={(e) => setFormData({ ...formData, expenseDate: e.target.value })}
-                      className="input-field"
-                      required
-                    />
-                  </div>
-                </div>
-
-                <div className="space-y-2">
-                  <label className="block text-sm font-medium text-midnight-300">Category</label>
-                  <select
-                    value={formData.categoryId}
-                    onChange={(e) => setFormData({ ...formData, categoryId: e.target.value })}
-                    className="input-field"
+          <div className="fixed inset-0 z-50 overflow-y-auto">
+            <div className="min-h-full flex items-center justify-center p-4">
+              <motion.div
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                onClick={() => setShowModal(false)}
+                className="fixed inset-0 bg-black/60 backdrop-blur-sm"
+              />
+              <motion.div
+                initial={{ opacity: 0, scale: 0.95, y: 20 }}
+                animate={{ opacity: 1, scale: 1, y: 0 }}
+                exit={{ opacity: 0, scale: 0.95, y: 20 }}
+                className="relative w-full max-w-lg glass-card-elevated my-8"
+              >
+                <div className="p-6 border-b border-midnight-700/50 flex items-center justify-between">
+                  <h2 className="text-xl font-display font-bold text-white">Add Expense</h2>
+                  <button
+                    onClick={() => setShowModal(false)}
+                    className="p-2 rounded-lg hover:bg-midnight-700/50 transition-colors"
                   >
-                    <option value="">Select category</option>
-                    {categories.map((cat) => (
-                      <option key={cat.id} value={cat.id}>{cat.name}</option>
-                    ))}
-                  </select>
+                    <X className="w-5 h-5 text-midnight-400" />
+                  </button>
                 </div>
 
-                <div className="space-y-2">
-                  <label className="block text-sm font-medium text-midnight-300">Notes (optional)</label>
-                  <textarea
-                    value={formData.notes}
-                    onChange={(e) => setFormData({ ...formData, notes: e.target.value })}
-                    className="input-field resize-none"
-                    rows={2}
-                    placeholder="Add any notes..."
-                  />
-                </div>
-
-                <button
-                  type="submit"
-                  disabled={submitting}
-                  className="btn-primary w-full flex items-center justify-center gap-2"
-                >
-                  {submitting ? (
-                    <Loader2 className="w-5 h-5 animate-spin" />
-                  ) : (
-                    <>
-                      <Plus className="w-5 h-5" />
-                      Add Expense
-                    </>
+                <form onSubmit={handleSubmit} className="p-6 space-y-5">
+                  {formError && (
+                    <div className="p-4 bg-loss/10 border border-loss/20 rounded-xl text-loss text-sm">
+                      {formError}
+                    </div>
                   )}
-                </button>
-              </form>
-            </motion.div>
+
+                  <div className="space-y-2">
+                    <label className="block text-sm font-medium text-midnight-300">Description</label>
+                    <input
+                      type="text"
+                      value={formData.description}
+                      onChange={(e) => setFormData({ ...formData, description: e.target.value })}
+                      className="input-field"
+                      placeholder="e.g., Grocery shopping"
+                      required
+                    />
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <label className="block text-sm font-medium text-midnight-300">Amount</label>
+                      <input
+                        type="number"
+                        step="any"
+                        value={formData.amount}
+                        onChange={(e) => setFormData({ ...formData, amount: e.target.value })}
+                        className="input-field"
+                        placeholder="50.00"
+                        required
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <label className="block text-sm font-medium text-midnight-300">Date</label>
+                      <input
+                        type="date"
+                        value={formData.expenseDate}
+                        onChange={(e) => setFormData({ ...formData, expenseDate: e.target.value })}
+                        className="input-field"
+                        required
+                      />
+                    </div>
+                  </div>
+
+                  <div className="space-y-2">
+                    <label className="block text-sm font-medium text-midnight-300">Category</label>
+                    <select
+                      value={formData.categoryId}
+                      onChange={(e) => setFormData({ ...formData, categoryId: e.target.value })}
+                      className="input-field"
+                    >
+                      <option value="">Select category</option>
+                      {categories.map((cat) => (
+                        <option key={cat.id} value={cat.id}>{cat.name}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  {/* Recurring Section */}
+                  <div className="space-y-3">
+                    <div className="flex items-center gap-3">
+                      <button
+                        type="button"
+                        onClick={() => setFormData({ ...formData, isRecurring: !formData.isRecurring })}
+                        className={`relative w-12 h-6 rounded-full transition-colors ${
+                          formData.isRecurring ? 'bg-accent-500' : 'bg-midnight-700'
+                        }`}
+                      >
+                        <span 
+                          className={`absolute top-1 w-4 h-4 bg-white rounded-full transition-transform ${
+                            formData.isRecurring ? 'left-7' : 'left-1'
+                          }`}
+                        />
+                      </button>
+                      <label className="text-sm font-medium text-midnight-300 flex items-center gap-2">
+                        <RefreshCw className="w-4 h-4" />
+                        Recurring expense
+                      </label>
+                    </div>
+                    
+                    {formData.isRecurring && (
+                      <motion.div
+                        initial={{ opacity: 0, height: 0 }}
+                        animate={{ opacity: 1, height: 'auto' }}
+                        exit={{ opacity: 0, height: 0 }}
+                        className="space-y-2"
+                      >
+                        <label className="block text-sm font-medium text-midnight-300">Frequency</label>
+                        <div className="grid grid-cols-3 gap-2">
+                          {recurringOptions.map((option) => (
+                            <button
+                              key={option.value}
+                              type="button"
+                              onClick={() => setFormData({ ...formData, recurringFrequency: option.value })}
+                              className={`py-2 px-3 rounded-lg text-sm font-medium transition-all ${
+                                formData.recurringFrequency === option.value
+                                  ? 'bg-accent-500 text-white'
+                                  : 'bg-midnight-700/50 text-midnight-400 hover:text-midnight-200'
+                              }`}
+                            >
+                              {option.label}
+                            </button>
+                          ))}
+                        </div>
+                      </motion.div>
+                    )}
+                  </div>
+
+                  <div className="space-y-2">
+                    <label className="block text-sm font-medium text-midnight-300">Notes (optional)</label>
+                    <textarea
+                      value={formData.notes}
+                      onChange={(e) => setFormData({ ...formData, notes: e.target.value })}
+                      className="input-field resize-none"
+                      rows={2}
+                      placeholder="Add any notes..."
+                    />
+                  </div>
+
+                  <button
+                    type="submit"
+                    disabled={submitting}
+                    className="btn-primary w-full flex items-center justify-center gap-2"
+                  >
+                    {submitting ? (
+                      <Loader2 className="w-5 h-5 animate-spin" />
+                    ) : (
+                      <>
+                        <Plus className="w-5 h-5" />
+                        Add Expense
+                      </>
+                    )}
+                  </button>
+                </form>
+              </motion.div>
+            </div>
           </div>
         )}
       </AnimatePresence>

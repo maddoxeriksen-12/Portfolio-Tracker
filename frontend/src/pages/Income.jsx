@@ -259,20 +259,21 @@ export default function Income() {
       {/* Add Income Modal */}
       <AnimatePresence>
         {showModal && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-            <motion.div
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              onClick={() => setShowModal(false)}
-              className="absolute inset-0 bg-black/60 backdrop-blur-sm"
-            />
-            <motion.div
-              initial={{ opacity: 0, scale: 0.95, y: 20 }}
-              animate={{ opacity: 1, scale: 1, y: 0 }}
-              exit={{ opacity: 0, scale: 0.95, y: 20 }}
-              className="relative w-full max-w-lg glass-card-elevated overflow-auto max-h-[90vh]"
-            >
+          <div className="fixed inset-0 z-50 overflow-y-auto">
+            <div className="min-h-full flex items-center justify-center p-4">
+              <motion.div
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                onClick={() => setShowModal(false)}
+                className="fixed inset-0 bg-black/60 backdrop-blur-sm"
+              />
+              <motion.div
+                initial={{ opacity: 0, scale: 0.95, y: 20 }}
+                animate={{ opacity: 1, scale: 1, y: 0 }}
+                exit={{ opacity: 0, scale: 0.95, y: 20 }}
+                className="relative w-full max-w-lg glass-card-elevated my-8"
+              >
               <div className="p-6 border-b border-midnight-700/50 flex items-center justify-between">
                 <h2 className="text-xl font-display font-bold text-white">Add Income Source</h2>
                 <button
@@ -410,6 +411,7 @@ export default function Income() {
                 </button>
               </form>
             </motion.div>
+            </div>
           </div>
         )}
       </AnimatePresence>
