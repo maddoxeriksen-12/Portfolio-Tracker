@@ -21,13 +21,13 @@ router.get('/monthly', expenseController.getMonthlyBreakdown);
 
 // Expenses CRUD
 router.post('/', [
-  body('categoryId').optional().isUUID(),
+  body('categoryId').optional({ nullable: true }).isUUID(),
   body('description').trim().notEmpty(),
   body('amount').isFloat({ gt: 0 }),
-  body('expenseDate').isDate(),
+  body('expenseDate').matches(/^\d{4}-\d{2}-\d{2}$/).withMessage('Date must be in YYYY-MM-DD format'),
   body('isRecurring').optional().isBoolean(),
-  body('recurringFrequency').optional().isIn(['WEEKLY', 'BI_WEEKLY', 'MONTHLY', 'QUARTERLY', 'ANNUALLY']),
-  body('notes').optional().trim()
+  body('recurringFrequency').optional({ nullable: true }).isIn(['WEEKLY', 'BI_WEEKLY', 'MONTHLY', 'QUARTERLY', 'ANNUALLY']),
+  body('notes').optional({ nullable: true }).trim()
 ], expenseController.createExpense);
 
 router.get('/', expenseController.getExpenses);

@@ -254,13 +254,16 @@ exports.deleteCategory = async (req, res) => {
   }
 };
 
-// Get monthly expense summary (P&L style)
+// Get monthly expense summary (P&L style) with recurring expense projections
 exports.getMonthlyBreakdown = async (req, res) => {
   try {
     const { year } = req.query;
     const targetYear = year ? parseInt(year) : new Date().getFullYear();
+    const currentDate = new Date();
+    const currentMonth = currentDate.getFullYear() === targetYear ? currentDate.getMonth() + 1 : 13;
 
-    const result = await pool.query(
+    // Get actual expenses for the year
+    const actualResult = await pool.query(
       `SELECT 
          EXTRACT(MONTH FROM e.expense_date) as month,
          ec.name as category,
@@ -275,37 +278,197 @@ exports.getMonthlyBreakdown = async (req, res) => {
       [req.user.id, targetYear]
     );
 
+    // Get recurring expenses that started this year or before
+    const recurringResult = await pool.query(
+      `SELECT 
+         e.id,
+         e.amount,
+         e.expense_date,
+         e.recurring_frequency,
+         ec.name as category,
+         ec.color
+       FROM expenses e
+       LEFT JOIN expense_categories ec ON e.category_id = ec.id
+       WHERE e.user_id = $1 
+         AND e.is_recurring = true
+         AND EXTRACT(YEAR FROM e.expense_date) <= $2`,
+      [req.user.id, targetYear]
+    );
+
     // Organize by month
     const breakdown = {};
     for (let m = 1; m <= 12; m++) {
       breakdown[m] = {
         month: m,
-        categories: [],
-        total: 0
+        categories: {},
+        total: 0,
+        projected: 0
       };
     }
 
-    for (const row of result.rows) {
+    // Add actual expenses
+    for (const row of actualResult.rows) {
       const month = parseInt(row.month);
       const amount = parseFloat(row.total);
-      breakdown[month].categories.push({
-        name: row.category || 'Uncategorized',
-        color: row.color || '#64748b',
-        amount
-      });
+      const categoryName = row.category || 'Uncategorized';
+      const categoryColor = row.color || '#64748b';
+      
+      if (!breakdown[month].categories[categoryName]) {
+        breakdown[month].categories[categoryName] = {
+          name: categoryName,
+          color: categoryColor,
+          amount: 0,
+          projected: 0
+        };
+      }
+      breakdown[month].categories[categoryName].amount += amount;
       breakdown[month].total += amount;
     }
 
+    // Project recurring expenses into future months
+    for (const recurring of recurringResult.rows) {
+      const expenseDate = new Date(recurring.expense_date);
+      const expenseMonth = expenseDate.getMonth() + 1;
+      const expenseYear = expenseDate.getFullYear();
+      const amount = parseFloat(recurring.amount);
+      const categoryName = recurring.category || 'Uncategorized';
+      const categoryColor = recurring.color || '#64748b';
+
+      // Calculate which future months should have this recurring expense
+      const futureMonths = getRecurringMonths(
+        expenseMonth, 
+        expenseYear, 
+        recurring.recurring_frequency, 
+        targetYear, 
+        currentMonth
+      );
+
+      for (const month of futureMonths) {
+        if (!breakdown[month].categories[categoryName]) {
+          breakdown[month].categories[categoryName] = {
+            name: categoryName,
+            color: categoryColor,
+            amount: 0,
+            projected: 0
+          };
+        }
+        breakdown[month].categories[categoryName].projected += amount;
+        breakdown[month].projected += amount;
+        breakdown[month].total += amount;
+      }
+    }
+
+    // Convert categories object to array for response
+    const formattedBreakdown = Object.values(breakdown).map(m => ({
+      month: m.month,
+      categories: Object.values(m.categories).map(c => ({
+        name: c.name,
+        color: c.color,
+        amount: c.amount + c.projected,
+        actual: c.amount,
+        projected: c.projected
+      })),
+      total: m.total,
+      actual: m.total - m.projected,
+      projected: m.projected
+    }));
+
     res.json({
       year: targetYear,
-      breakdown: Object.values(breakdown),
-      yearTotal: Object.values(breakdown).reduce((sum, m) => sum + m.total, 0)
+      breakdown: formattedBreakdown,
+      yearTotal: formattedBreakdown.reduce((sum, m) => sum + m.total, 0)
     });
   } catch (error) {
     console.error('Monthly breakdown error:', error);
     res.status(500).json({ error: 'Failed to get monthly breakdown' });
   }
 };
+
+// Helper function to calculate which months should have recurring expense projections
+function getRecurringMonths(startMonth, startYear, frequency, targetYear, currentMonth) {
+  const months = [];
+  
+  // Don't project into past months of the current year
+  const firstProjectableMonth = Math.max(currentMonth, 1);
+  
+  // Calculate interval in months
+  let intervalMonths;
+  switch (frequency) {
+    case 'WEEKLY':
+      intervalMonths = 1; // Weekly appears every month
+      break;
+    case 'BI_WEEKLY':
+      intervalMonths = 1; // Bi-weekly appears every month
+      break;
+    case 'MONTHLY':
+      intervalMonths = 1;
+      break;
+    case 'QUARTERLY':
+      intervalMonths = 3;
+      break;
+    case 'ANNUALLY':
+      intervalMonths = 12;
+      break;
+    default:
+      intervalMonths = 1;
+  }
+
+  // For weekly/bi-weekly, we project once per month for simplicity
+  // For monthly, every month
+  // For quarterly, every 3 months from start month
+  // For annually, same month each year
+
+  if (frequency === 'WEEKLY' || frequency === 'BI_WEEKLY' || frequency === 'MONTHLY') {
+    // Project to all future months in the target year
+    for (let m = firstProjectableMonth; m <= 12; m++) {
+      // Skip if this is before the expense started
+      if (targetYear === startYear && m < startMonth) continue;
+      if (targetYear < startYear) continue;
+      months.push(m);
+    }
+  } else if (frequency === 'QUARTERLY') {
+    // Find the quarter months based on start month
+    const quarterMonths = [];
+    let nextMonth = startMonth;
+    while (nextMonth <= 12) {
+      quarterMonths.push(nextMonth);
+      nextMonth += 3;
+    }
+    // Also check months that wrap from previous year
+    nextMonth = startMonth;
+    while (nextMonth > 0) {
+      if (nextMonth <= 12 && !quarterMonths.includes(nextMonth)) {
+        quarterMonths.push(nextMonth);
+      }
+      nextMonth -= 3;
+    }
+    nextMonth = startMonth + 3;
+    while (nextMonth > 12) nextMonth -= 12;
+    let count = 0;
+    while (count < 4) {
+      if (!quarterMonths.includes(nextMonth)) quarterMonths.push(nextMonth);
+      nextMonth = nextMonth + 3 > 12 ? nextMonth + 3 - 12 : nextMonth + 3;
+      count++;
+    }
+    
+    for (const m of quarterMonths) {
+      if (m >= firstProjectableMonth) {
+        if (targetYear === startYear && m < startMonth) continue;
+        if (targetYear < startYear) continue;
+        months.push(m);
+      }
+    }
+  } else if (frequency === 'ANNUALLY') {
+    // Only the same month as the start month
+    if (startMonth >= firstProjectableMonth) {
+      if (targetYear > startYear || (targetYear === startYear && startMonth >= startMonth)) {
+        months.push(startMonth);
+      }
+    }
+  }
+
+  return months;
+}
 
 async function getExpenseWithCategory(expenseId) {
   const result = await pool.query(

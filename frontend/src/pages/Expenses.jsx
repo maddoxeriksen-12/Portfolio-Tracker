@@ -115,19 +115,25 @@ export default function Expenses() {
     }
   };
 
-  const currentMonthData = monthlyData.find(m => m.month === selectedMonth) || { categories: [], total: 0 };
+  const currentMonthData = monthlyData.find(m => m.month === selectedMonth) || { categories: [], total: 0, actual: 0, projected: 0 };
   const yearTotal = monthlyData.reduce((sum, m) => sum + m.total, 0);
+  const yearActual = monthlyData.reduce((sum, m) => sum + (m.actual || m.total), 0);
+  const yearProjected = monthlyData.reduce((sum, m) => sum + (m.projected || 0), 0);
 
-  // Chart data
+  // Chart data - separate actual and projected for stacked bar chart
   const barData = monthlyData.map(m => ({
     month: months[m.month - 1],
+    actual: m.actual || m.total,
+    projected: m.projected || 0,
     total: m.total
   }));
 
   const pieData = currentMonthData.categories.map(c => ({
     name: c.name,
     value: c.amount,
-    color: c.color
+    color: c.color,
+    actual: c.actual || c.amount,
+    projected: c.projected || 0
   }));
 
   return (
@@ -193,6 +199,11 @@ export default function Expenses() {
           <p className="text-2xl font-display font-bold text-loss">
             {formatCurrency(currentMonthData.total)}
           </p>
+          {(currentMonthData.projected || 0) > 0 && (
+            <p className="text-xs text-midnight-400 mt-1">
+              Includes <span className="text-accent-400">{formatCurrency(currentMonthData.projected)}</span> projected
+            </p>
+          )}
         </motion.div>
 
         <motion.div
@@ -208,6 +219,11 @@ export default function Expenses() {
           <p className="text-2xl font-display font-bold text-white">
             {formatCurrency(yearTotal)}
           </p>
+          {yearProjected > 0 && (
+            <p className="text-xs text-midnight-400 mt-1">
+              <span className="text-loss">{formatCurrency(yearActual)}</span> actual + <span className="text-accent-400">{formatCurrency(yearProjected)}</span> projected
+            </p>
+          )}
         </motion.div>
 
         <motion.div
@@ -234,7 +250,21 @@ export default function Expenses() {
           animate={{ opacity: 1, y: 0 }}
           className="glass-card p-6"
         >
-          <h3 className="text-lg font-display font-semibold text-white mb-4">Monthly Spending</h3>
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="text-lg font-display font-semibold text-white">Monthly Spending</h3>
+            {yearProjected > 0 && (
+              <div className="flex items-center gap-4 text-xs">
+                <div className="flex items-center gap-1.5">
+                  <div className="w-3 h-3 rounded bg-loss" />
+                  <span className="text-midnight-400">Actual</span>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <div className="w-3 h-3 rounded bg-accent-500 opacity-60" />
+                  <span className="text-midnight-400">Projected</span>
+                </div>
+              </div>
+            )}
+          </div>
           <div className="h-64">
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={barData}>
@@ -257,9 +287,13 @@ export default function Expenses() {
                     borderRadius: '12px',
                     color: '#d9e2ec'
                   }}
-                  formatter={(value) => [formatCurrency(value), 'Expenses']}
+                  formatter={(value, name) => [
+                    formatCurrency(value), 
+                    name === 'actual' ? 'Actual' : name === 'projected' ? 'Projected' : 'Total'
+                  ]}
                 />
-                <Bar dataKey="total" fill="#ef4444" radius={[4, 4, 0, 0]} />
+                <Bar dataKey="actual" stackId="expenses" fill="#ef4444" radius={[0, 0, 0, 0]} />
+                <Bar dataKey="projected" stackId="expenses" fill="#6366f1" fillOpacity={0.6} radius={[4, 4, 0, 0]} />
               </BarChart>
             </ResponsiveContainer>
           </div>
