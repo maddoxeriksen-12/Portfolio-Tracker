@@ -68,10 +68,17 @@ export default function Expenses() {
     }
   };
 
+  const [yearTotals, setYearTotals] = useState({ actual: 0, projected: 0, total: 0 });
+
   const loadMonthlyBreakdown = async () => {
     try {
       const response = await api.get(`/expenses/monthly?year=${selectedYear}`);
       setMonthlyData(response.data.breakdown);
+      setYearTotals({
+        actual: response.data.yearActual || 0,
+        projected: response.data.yearProjected || 0,
+        total: response.data.yearTotal || 0
+      });
     } catch (error) {
       console.error('Failed to load monthly breakdown');
     }
@@ -116,9 +123,9 @@ export default function Expenses() {
   };
 
   const currentMonthData = monthlyData.find(m => m.month === selectedMonth) || { categories: [], total: 0, actual: 0, projected: 0 };
-  const yearTotal = monthlyData.reduce((sum, m) => sum + m.total, 0);
-  const yearActual = monthlyData.reduce((sum, m) => sum + (m.actual || m.total), 0);
-  const yearProjected = monthlyData.reduce((sum, m) => sum + (m.projected || 0), 0);
+  const yearTotal = yearTotals.total;
+  const yearActual = yearTotals.actual;
+  const yearProjected = yearTotals.projected;
 
   // Chart data - separate actual and projected for stacked bar chart
   const barData = monthlyData.map(m => ({
@@ -196,12 +203,18 @@ export default function Expenses() {
             <CreditCard className="w-4 h-4" />
             <span className="text-sm">{months[selectedMonth - 1]} Expenses</span>
           </div>
-          <p className="text-2xl font-display font-bold text-loss">
-            {formatCurrency(currentMonthData.total)}
-          </p>
-          {(currentMonthData.projected || 0) > 0 && (
-            <p className="text-xs text-midnight-400 mt-1">
-              Includes <span className="text-accent-400">{formatCurrency(currentMonthData.projected)}</span> projected
+          {(currentMonthData.projected || 0) > 0 ? (
+            <>
+              <p className="text-2xl font-display font-bold text-accent-400">
+                {formatCurrency(currentMonthData.total)}
+              </p>
+              <p className="text-xs text-midnight-400 mt-1">
+                <span className="text-accent-400">Forecasted</span> (recurring expenses)
+              </p>
+            </>
+          ) : (
+            <p className="text-2xl font-display font-bold text-loss">
+              {formatCurrency(currentMonthData.actual || currentMonthData.total)}
             </p>
           )}
         </motion.div>
@@ -221,7 +234,7 @@ export default function Expenses() {
           </p>
           {yearProjected > 0 && (
             <p className="text-xs text-midnight-400 mt-1">
-              <span className="text-loss">{formatCurrency(yearActual)}</span> actual + <span className="text-accent-400">{formatCurrency(yearProjected)}</span> projected
+              <span className="text-loss">{formatCurrency(yearActual)}</span> spent + <span className="text-accent-400">{formatCurrency(yearProjected)}</span> forecasted
             </p>
           )}
         </motion.div>
@@ -256,11 +269,11 @@ export default function Expenses() {
               <div className="flex items-center gap-4 text-xs">
                 <div className="flex items-center gap-1.5">
                   <div className="w-3 h-3 rounded bg-loss" />
-                  <span className="text-midnight-400">Actual</span>
+                  <span className="text-midnight-400">Spent</span>
                 </div>
                 <div className="flex items-center gap-1.5">
                   <div className="w-3 h-3 rounded bg-accent-500 opacity-60" />
-                  <span className="text-midnight-400">Projected</span>
+                  <span className="text-midnight-400">Forecast</span>
                 </div>
               </div>
             )}
@@ -289,7 +302,7 @@ export default function Expenses() {
                   }}
                   formatter={(value, name) => [
                     formatCurrency(value), 
-                    name === 'actual' ? 'Actual' : name === 'projected' ? 'Projected' : 'Total'
+                    name === 'actual' ? 'Spent' : name === 'projected' ? 'Forecast' : 'Total'
                   ]}
                 />
                 <Bar dataKey="actual" stackId="expenses" fill="#ef4444" radius={[0, 0, 0, 0]} />

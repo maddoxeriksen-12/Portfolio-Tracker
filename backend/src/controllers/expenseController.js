@@ -260,9 +260,14 @@ exports.getMonthlyBreakdown = async (req, res) => {
     const { year } = req.query;
     const targetYear = year ? parseInt(year) : new Date().getFullYear();
     const currentDate = new Date();
-    const currentMonth = currentDate.getFullYear() === targetYear ? currentDate.getMonth() + 1 : 13;
+    const currentMonth = currentDate.getFullYear() === targetYear ? currentDate.getMonth() + 1 : 0;
+    // If viewing a past year, currentMonth = 13 means all months are "past" (show actuals only)
+    // If viewing a future year, currentMonth = 0 means all months are "future" (show projections)
+    const effectiveCurrentMonth = currentDate.getFullYear() > targetYear ? 13 : 
+                                   currentDate.getFullYear() < targetYear ? 0 : 
+                                   currentDate.getMonth() + 1;
 
-    // Get actual expenses for the year
+    // Get actual expenses for the year (all recorded expenses)
     const actualResult = await pool.query(
       `SELECT 
          EXTRACT(MONTH FROM e.expense_date) as month,
@@ -278,7 +283,7 @@ exports.getMonthlyBreakdown = async (req, res) => {
       [req.user.id, targetYear]
     );
 
-    // Get recurring expenses that started this year or before
+    // Get recurring expenses that started this year or before (for projecting future months)
     const recurringResult = await pool.query(
       `SELECT 
          e.id,
@@ -291,8 +296,8 @@ exports.getMonthlyBreakdown = async (req, res) => {
        LEFT JOIN expense_categories ec ON e.category_id = ec.id
        WHERE e.user_id = $1 
          AND e.is_recurring = true
-         AND EXTRACT(YEAR FROM e.expense_date) <= $2`,
-      [req.user.id, targetYear]
+         AND e.expense_date <= $2`,
+      [req.user.id, `${targetYear}-12-31`]
     );
 
     // Organize by month
@@ -301,12 +306,12 @@ exports.getMonthlyBreakdown = async (req, res) => {
       breakdown[m] = {
         month: m,
         categories: {},
-        total: 0,
+        actual: 0,
         projected: 0
       };
     }
 
-    // Add actual expenses
+    // Add actual expenses (these are real recorded expenses)
     for (const row of actualResult.rows) {
       const month = parseInt(row.month);
       const amount = parseFloat(row.total);
@@ -317,15 +322,15 @@ exports.getMonthlyBreakdown = async (req, res) => {
         breakdown[month].categories[categoryName] = {
           name: categoryName,
           color: categoryColor,
-          amount: 0,
+          actual: 0,
           projected: 0
         };
       }
-      breakdown[month].categories[categoryName].amount += amount;
-      breakdown[month].total += amount;
+      breakdown[month].categories[categoryName].actual += amount;
+      breakdown[month].actual += amount;
     }
 
-    // Project recurring expenses into future months
+    // Project recurring expenses ONLY into future months (months after current month)
     for (const recurring of recurringResult.rows) {
       const expenseDate = new Date(recurring.expense_date);
       const expenseMonth = expenseDate.getMonth() + 1;
@@ -340,7 +345,7 @@ exports.getMonthlyBreakdown = async (req, res) => {
         expenseYear, 
         recurring.recurring_frequency, 
         targetYear, 
-        currentMonth
+        effectiveCurrentMonth
       );
 
       for (const month of futureMonths) {
@@ -348,13 +353,12 @@ exports.getMonthlyBreakdown = async (req, res) => {
           breakdown[month].categories[categoryName] = {
             name: categoryName,
             color: categoryColor,
-            amount: 0,
+            actual: 0,
             projected: 0
           };
         }
         breakdown[month].categories[categoryName].projected += amount;
         breakdown[month].projected += amount;
-        breakdown[month].total += amount;
       }
     }
 
@@ -364,19 +368,25 @@ exports.getMonthlyBreakdown = async (req, res) => {
       categories: Object.values(m.categories).map(c => ({
         name: c.name,
         color: c.color,
-        amount: c.amount + c.projected,
-        actual: c.amount,
+        amount: c.actual + c.projected,
+        actual: c.actual,
         projected: c.projected
       })),
-      total: m.total,
-      actual: m.total - m.projected,
+      total: m.actual + m.projected,
+      actual: m.actual,
       projected: m.projected
     }));
+
+    // Calculate year totals
+    const yearActual = formattedBreakdown.reduce((sum, m) => sum + m.actual, 0);
+    const yearProjected = formattedBreakdown.reduce((sum, m) => sum + m.projected, 0);
 
     res.json({
       year: targetYear,
       breakdown: formattedBreakdown,
-      yearTotal: formattedBreakdown.reduce((sum, m) => sum + m.total, 0)
+      yearTotal: yearActual + yearProjected,
+      yearActual,
+      yearProjected
     });
   } catch (error) {
     console.error('Monthly breakdown error:', error);
@@ -384,84 +394,59 @@ exports.getMonthlyBreakdown = async (req, res) => {
   }
 };
 
-// Helper function to calculate which months should have recurring expense projections
+// Helper function to calculate which FUTURE months should have recurring expense projections
 function getRecurringMonths(startMonth, startYear, frequency, targetYear, currentMonth) {
   const months = [];
   
-  // Don't project into past months of the current year
-  const firstProjectableMonth = Math.max(currentMonth, 1);
+  // Only project into months AFTER the current month (future months only)
+  const firstFutureMonth = currentMonth + 1;
   
-  // Calculate interval in months
-  let intervalMonths;
-  switch (frequency) {
-    case 'WEEKLY':
-      intervalMonths = 1; // Weekly appears every month
-      break;
-    case 'BI_WEEKLY':
-      intervalMonths = 1; // Bi-weekly appears every month
-      break;
-    case 'MONTHLY':
-      intervalMonths = 1;
-      break;
-    case 'QUARTERLY':
-      intervalMonths = 3;
-      break;
-    case 'ANNUALLY':
-      intervalMonths = 12;
-      break;
-    default:
-      intervalMonths = 1;
-  }
+  // If all months are in the past (viewing past year), return empty
+  if (firstFutureMonth > 12) return months;
 
-  // For weekly/bi-weekly, we project once per month for simplicity
-  // For monthly, every month
-  // For quarterly, every 3 months from start month
-  // For annually, same month each year
+  // For weekly/bi-weekly, we estimate monthly equivalent
+  // Weekly = ~4.33 occurrences per month, bi-weekly = ~2.17 occurrences
+  // For simplicity, we project 1x the amount per month
 
   if (frequency === 'WEEKLY' || frequency === 'BI_WEEKLY' || frequency === 'MONTHLY') {
     // Project to all future months in the target year
-    for (let m = firstProjectableMonth; m <= 12; m++) {
-      // Skip if this is before the expense started
+    for (let m = firstFutureMonth; m <= 12; m++) {
+      // Skip if the expense hasn't started yet
       if (targetYear === startYear && m < startMonth) continue;
       if (targetYear < startYear) continue;
       months.push(m);
     }
   } else if (frequency === 'QUARTERLY') {
-    // Find the quarter months based on start month
-    const quarterMonths = [];
-    let nextMonth = startMonth;
-    while (nextMonth <= 12) {
-      quarterMonths.push(nextMonth);
-      nextMonth += 3;
+    // Calculate all quarterly months based on start month
+    const quarterMonths = new Set();
+    let m = startMonth;
+    while (m <= 12) {
+      quarterMonths.add(m);
+      m += 3;
     }
-    // Also check months that wrap from previous year
-    nextMonth = startMonth;
-    while (nextMonth > 0) {
-      if (nextMonth <= 12 && !quarterMonths.includes(nextMonth)) {
-        quarterMonths.push(nextMonth);
+    // For years after start year, also include wrapped months
+    if (targetYear > startYear) {
+      m = startMonth;
+      while (m > 0) {
+        m -= 3;
       }
-      nextMonth -= 3;
-    }
-    nextMonth = startMonth + 3;
-    while (nextMonth > 12) nextMonth -= 12;
-    let count = 0;
-    while (count < 4) {
-      if (!quarterMonths.includes(nextMonth)) quarterMonths.push(nextMonth);
-      nextMonth = nextMonth + 3 > 12 ? nextMonth + 3 - 12 : nextMonth + 3;
-      count++;
+      m += 3;
+      while (m <= 12) {
+        quarterMonths.add(m);
+        m += 3;
+      }
     }
     
-    for (const m of quarterMonths) {
-      if (m >= firstProjectableMonth) {
-        if (targetYear === startYear && m < startMonth) continue;
-        if (targetYear < startYear) continue;
-        months.push(m);
+    for (const qm of quarterMonths) {
+      if (qm >= firstFutureMonth) {
+        if (targetYear === startYear && qm < startMonth) continue;
+        months.push(qm);
       }
     }
   } else if (frequency === 'ANNUALLY') {
-    // Only the same month as the start month
-    if (startMonth >= firstProjectableMonth) {
-      if (targetYear > startYear || (targetYear === startYear && startMonth >= startMonth)) {
+    // Only the same month as the start month, if it's in the future
+    if (startMonth >= firstFutureMonth) {
+      if (targetYear >= startYear) {
         months.push(startMonth);
       }
     }
