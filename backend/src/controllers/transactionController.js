@@ -46,7 +46,7 @@ exports.createTransaction = async (req, res) => {
     let result = { transaction };
 
     if (transactionType === 'BUY') {
-      // Create tax lot
+      // Create tax lot (pass client to use same transaction)
       const taxLot = await taxCalculator.createTaxLot(
         req.user.id,
         transaction.id,
@@ -54,7 +54,8 @@ exports.createTransaction = async (req, res) => {
         quantity,
         pricePerUnit,
         fees,
-        transactionDate
+        transactionDate,
+        client  // Pass the database client for transaction consistency
       );
       result.taxLot = taxLot;
     } else if (transactionType === 'SELL') {

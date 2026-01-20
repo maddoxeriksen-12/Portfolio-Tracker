@@ -78,12 +78,16 @@ class TaxCalculatorService {
   }
 
   // Create a new tax lot from a buy transaction
-  async createTaxLot(userId, buyTransactionId, assetId, quantity, pricePerUnit, fees, purchaseDate) {
+  // Pass dbClient to use existing transaction, otherwise uses pool
+  async createTaxLot(userId, buyTransactionId, assetId, quantity, pricePerUnit, fees, purchaseDate, dbClient = null) {
     // Cost basis includes fees
     const totalCost = parseFloat(quantity) * parseFloat(pricePerUnit) + parseFloat(fees || 0);
     const costBasisPerUnit = totalCost / parseFloat(quantity);
     
-    const result = await pool.query(
+    // Use provided client (for transaction) or pool
+    const queryRunner = dbClient || pool;
+    
+    const result = await queryRunner.query(
       `INSERT INTO tax_lots 
        (user_id, buy_transaction_id, asset_id, original_quantity, remaining_quantity, 
         cost_basis_per_unit, purchase_date)
