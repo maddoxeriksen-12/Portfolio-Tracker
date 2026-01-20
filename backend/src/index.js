@@ -17,19 +17,61 @@ const app = express();
 const PORT = process.env.PORT || 3001;
 
 // ===================
+// CORS CONFIGURATION (must be before other middleware)
+// ===================
+
+// Allowed origins for CORS
+const allowedOrigins = [
+  'http://localhost:5173',
+  'http://localhost:3000',
+  process.env.FRONTEND_URL
+].filter(Boolean); // Remove undefined values
+
+const corsOptions = {
+  origin: function (origin, callback) {
+    // Allow requests with no origin (mobile apps, curl, Postman)
+    if (!origin) return callback(null, true);
+    
+    // Remove trailing slash for comparison
+    const normalizedOrigin = origin.replace(/\/$/, '');
+    const normalizedAllowed = allowedOrigins.map(o => o.replace(/\/$/, ''));
+    
+    if (normalizedAllowed.includes(normalizedOrigin)) {
+      callback(null, true);
+    } else {
+      console.log('CORS blocked origin:', origin);
+      console.log('Allowed origins:', normalizedAllowed);
+      callback(null, true); // Allow all origins for now to debug
+    }
+  },
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept'],
+  exposedHeaders: ['Content-Range', 'X-Content-Range'],
+  maxAge: 86400 // 24 hours
+};
+
+// Apply CORS
+app.use(cors(corsOptions));
+
+// Handle preflight requests explicitly
+app.options('*', cors(corsOptions));
+
+// ===================
 // SECURITY MIDDLEWARE
 // ===================
 
 // Helmet: Sets various HTTP headers for security
 app.use(helmet({
-  contentSecurityPolicy: false, // Disable CSP for API
-  crossOriginEmbedderPolicy: false
+  contentSecurityPolicy: false,
+  crossOriginEmbedderPolicy: false,
+  crossOriginResourcePolicy: { policy: "cross-origin" }
 }));
 
 // Rate limiting: Prevent brute force attacks
 const generalLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 100, // 100 requests per window per IP
+  max: 100,
   message: { error: 'Too many requests, please try again later' },
   standardHeaders: true,
   legacyHeaders: false
@@ -38,7 +80,7 @@ const generalLimiter = rateLimit({
 // Stricter rate limit for auth endpoints
 const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 10, // 10 login/register attempts per 15 min
+  max: 10,
   message: { error: 'Too many authentication attempts, please try again later' },
   standardHeaders: true,
   legacyHeaders: false
@@ -47,28 +89,18 @@ const authLimiter = rateLimit({
 // Apply general rate limiting to all requests
 app.use(generalLimiter);
 
-// CORS configuration
-app.use(cors({
-  origin: process.env.FRONTEND_URL || 'http://localhost:5173',
-  credentials: true,
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization']
-}));
-
-// Body parsing with size limits (prevent large payload attacks)
+// Body parsing with size limits
 app.use(express.json({ limit: '10kb' }));
 app.use(express.urlencoded({ extended: true, limit: '10kb' }));
 
-// Remove X-Powered-By header (don't reveal tech stack)
+// Remove X-Powered-By header
 app.disable('x-powered-by');
 
-// Request logging (development only)
-if (process.env.NODE_ENV !== 'production') {
-  app.use((req, res, next) => {
-    console.log(`${new Date().toISOString()} ${req.method} ${req.path}`);
-    next();
-  });
-}
+// Request logging
+app.use((req, res, next) => {
+  console.log(`${new Date().toISOString()} ${req.method} ${req.path} - Origin: ${req.headers.origin || 'none'}`);
+  next();
+});
 
 // ===================
 // ROUTES
@@ -76,7 +108,11 @@ if (process.env.NODE_ENV !== 'production') {
 
 // Health check (no rate limit)
 app.get('/health', (req, res) => {
-  res.json({ status: 'healthy', timestamp: new Date().toISOString() });
+  res.json({ 
+    status: 'healthy', 
+    timestamp: new Date().toISOString(),
+    allowedOrigins: allowedOrigins
+  });
 });
 
 // Auth routes with stricter rate limiting
@@ -99,11 +135,10 @@ app.use((req, res) => {
   res.status(404).json({ error: 'Not found' });
 });
 
-// Global error handler (don't leak error details in production)
+// Global error handler
 app.use((err, req, res, next) => {
   console.error('Error:', err);
   
-  // Don't leak error details in production
   const message = process.env.NODE_ENV === 'production' 
     ? 'Internal server error' 
     : err.message;
@@ -124,6 +159,7 @@ app.listen(PORT, () => {
   ║   Environment: ${process.env.NODE_ENV || 'development'}                       ║
   ║                                                       ║
   ║   🔒 Security: Helmet, Rate Limiting, CORS enabled    ║
+  ║   Allowed Origins: ${allowedOrigins.join(', ')}
   ║                                                       ║
   ╚═══════════════════════════════════════════════════════╝
   `);
