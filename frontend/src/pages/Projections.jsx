@@ -29,7 +29,11 @@ const formatCurrencyFull = (value) => {
 export default function Projections() {
   const { projections, assets, fetchProjections, fetchOverview, setAssetCAGR } = usePortfolioStore();
   const [years, setYears] = useState(10);
-  const [monthlyContribution, setMonthlyContribution] = useState(0);
+  const [monthlyContribution, setMonthlyContribution] = useState(() => {
+    // Load from localStorage on initial render
+    const saved = localStorage.getItem('projectionMonthlyContribution');
+    return saved ? parseFloat(saved) : 0;
+  });
   const [assetCAGRs, setAssetCAGRs] = useState({});
   const [showSettings, setShowSettings] = useState(false);
 
@@ -41,19 +45,41 @@ export default function Projections() {
     fetchProjections(years, monthlyContribution);
   }, [years, monthlyContribution]);
 
+  // Load asset CAGRs from projection data when available
+  useEffect(() => {
+    if (projections?.projections?.[0]?.assetValues) {
+      const cagrs = {};
+      projections.projections[0].assetValues.forEach(asset => {
+        // Find matching asset by symbol to get assetId
+        const matchingAsset = assets?.find(a => a.symbol === asset.symbol);
+        if (matchingAsset) {
+          cagrs[matchingAsset.assetId] = asset.estimatedCAGR;
+        }
+      });
+      setAssetCAGRs(cagrs);
+    }
+  }, [projections, assets]);
+
+  const handleContributionChange = (value) => {
+    const newValue = parseFloat(value) || 0;
+    setMonthlyContribution(newValue);
+    // Save to localStorage
+    localStorage.setItem('projectionMonthlyContribution', newValue.toString());
+  };
+
   const handleCAGRChange = async (assetId, cagr) => {
-    setAssetCAGRs({ ...assetCAGRs, [assetId]: cagr });
-    await setAssetCAGR(assetId, parseFloat(cagr));
+    const cagrValue = parseFloat(cagr) || 0;
+    setAssetCAGRs({ ...assetCAGRs, [assetId]: cagrValue });
+    // Save to backend (persists in database)
+    await setAssetCAGR(assetId, cagrValue);
     fetchProjections(years, monthlyContribution);
   };
 
-  // Chart data
+  // Chart data - using new field names
   const chartData = projections?.projections?.map(p => ({
     year: p.year === 0 ? 'Now' : `Year ${p.year}`,
-    portfolio: p.portfolioValue,
-    contributions: p.contributionsValue,
-    income: p.netIncomeValue,
-    total: p.totalValue
+    startingBalance: p.startingBalance,
+    endingBalance: p.endingBalance
   })) || [];
 
   // Asset breakdown for the final year
@@ -106,10 +132,11 @@ export default function Projections() {
               <input
                 type="number"
                 value={monthlyContribution}
-                onChange={(e) => setMonthlyContribution(parseFloat(e.target.value) || 0)}
+                onChange={(e) => handleContributionChange(e.target.value)}
                 className="input-field"
                 placeholder="500"
               />
+              <p className="text-xs text-midnight-400">Saved automatically</p>
             </div>
 
             <div className="space-y-2">
@@ -136,7 +163,10 @@ export default function Projections() {
           {/* Asset CAGR Settings */}
           {assets && assets.length > 0 && (
             <div className="mt-6 pt-6 border-t border-midnight-700/50">
-              <h4 className="text-sm font-medium text-midnight-300 mb-4">Asset CAGR Estimates</h4>
+              <div className="flex items-center justify-between mb-4">
+                <h4 className="text-sm font-medium text-midnight-300">Asset CAGR Estimates</h4>
+                <span className="text-xs text-midnight-500">Changes saved automatically</span>
+              </div>
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
                 {assets.map((asset) => (
                   <div key={asset.assetId} className="flex items-center gap-3">
@@ -234,13 +264,9 @@ export default function Projections() {
           <ResponsiveContainer width="100%" height="100%">
             <AreaChart data={chartData}>
               <defs>
-                <linearGradient id="colorTotal" x1="0" y1="0" x2="0" y2="1">
+                <linearGradient id="colorEnding" x1="0" y1="0" x2="0" y2="1">
                   <stop offset="5%" stopColor="#10b981" stopOpacity={0.3} />
                   <stop offset="95%" stopColor="#10b981" stopOpacity={0} />
-                </linearGradient>
-                <linearGradient id="colorPortfolio" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%" stopColor="#2a97ff" stopOpacity={0.3} />
-                  <stop offset="95%" stopColor="#2a97ff" stopOpacity={0} />
                 </linearGradient>
               </defs>
               <XAxis 
@@ -267,19 +293,11 @@ export default function Projections() {
               <Legend />
               <Area
                 type="monotone"
-                dataKey="total"
-                name="Total Value"
+                dataKey="endingBalance"
+                name="Ending Balance"
                 stroke="#10b981"
                 strokeWidth={2}
-                fill="url(#colorTotal)"
-              />
-              <Area
-                type="monotone"
-                dataKey="portfolio"
-                name="Portfolio Only"
-                stroke="#2a97ff"
-                strokeWidth={2}
-                fill="url(#colorPortfolio)"
+                fill="url(#colorEnding)"
               />
             </AreaChart>
           </ResponsiveContainer>
@@ -301,10 +319,10 @@ export default function Projections() {
             <thead>
               <tr className="border-b border-midnight-800/50">
                 <th className="table-header px-6 py-4">Year</th>
-                <th className="table-header px-6 py-4 text-right">Portfolio Value</th>
+                <th className="table-header px-6 py-4 text-right">Starting Balance</th>
                 <th className="table-header px-6 py-4 text-right">Contributions</th>
-                <th className="table-header px-6 py-4 text-right">Net Income</th>
-                <th className="table-header px-6 py-4 text-right">Total Value</th>
+                <th className="table-header px-6 py-4 text-right">Remaining Income</th>
+                <th className="table-header px-6 py-4 text-right">Ending Balance</th>
               </tr>
             </thead>
             <tbody>
@@ -317,16 +335,16 @@ export default function Projections() {
                     {p.year === 0 ? 'Current' : `Year ${p.year}`}
                   </td>
                   <td className="table-cell px-6 text-right font-mono text-midnight-200">
-                    {formatCurrencyFull(p.portfolioValue)}
+                    {formatCurrencyFull(p.startingBalance)}
                   </td>
-                  <td className="table-cell px-6 text-right font-mono text-midnight-200">
-                    {formatCurrencyFull(p.contributionsValue)}
+                  <td className="table-cell px-6 text-right font-mono text-accent-400">
+                    {p.yearlyContributions > 0 ? `+${formatCurrencyFull(p.yearlyContributions)}` : '—'}
                   </td>
-                  <td className="table-cell px-6 text-right font-mono text-midnight-200">
-                    {formatCurrencyFull(p.netIncomeValue)}
+                  <td className="table-cell px-6 text-right font-mono text-accent-400">
+                    {p.yearlyRemainingIncome > 0 ? `+${formatCurrencyFull(p.yearlyRemainingIncome)}` : '—'}
                   </td>
                   <td className="table-cell px-6 text-right font-mono font-medium text-gain">
-                    {formatCurrencyFull(p.totalValue)}
+                    {formatCurrencyFull(p.endingBalance)}
                   </td>
                 </tr>
               ))}

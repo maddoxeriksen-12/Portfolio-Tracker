@@ -24,19 +24,32 @@ class ProjectionCalculatorService {
     const incomeExpense = await this.getMonthlyNetIncome(userId);
     const monthlyNet = incomeExpense.monthlyNetIncome;
 
-    // Calculate projections
-    const projections = [];
+    // Calculate average CAGR
+    const avgCAGR = holdings.rows.length > 0
+      ? holdings.rows.reduce((sum, h) => sum + parseFloat(h.estimated_cagr), 0) / holdings.rows.length
+      : 7;
+    const avgCAGRDecimal = avgCAGR / 100;
+
+    // Calculate yearly contributions and remaining net income
+    const yearlyContributions = monthlyContribution * 12;
+    const yearlyNetIncome = monthlyNet * 12;
+    // Remaining income after contributions (if net income > contributions, otherwise 0)
+    const yearlyRemainingIncome = Math.max(0, yearlyNetIncome - yearlyContributions);
+
+    // Calculate projections year by year
     const yearlyBreakdown = [];
+    let previousEndingBalance = 0;
+
+    // Calculate initial portfolio value
+    const initialPortfolioValue = holdings.rows.reduce((sum, h) => sum + parseFloat(h.cost_basis), 0);
 
     for (let year = 0; year <= years; year++) {
-      let totalValue = 0;
       const assetValues = [];
 
+      // Calculate asset values for this year
       for (const holding of holdings.rows) {
         const cagr = parseFloat(holding.estimated_cagr) / 100;
-        const currentValue = parseFloat(holding.cost_basis); // Use cost basis as starting point
-        
-        // Compound growth: FV = PV * (1 + r)^n
+        const currentValue = parseFloat(holding.cost_basis);
         const futureValue = currentValue * Math.pow(1 + cagr, year);
         
         assetValues.push({
@@ -48,52 +61,63 @@ class ProjectionCalculatorService {
           futureValue: futureValue,
           growth: futureValue - currentValue
         });
-        
-        totalValue += futureValue;
       }
 
-      // Add monthly contributions compounded
-      // Future Value of Annuity: FV = PMT * [((1 + r)^n - 1) / r]
-      // Using average portfolio CAGR for contributions
-      const avgCAGR = holdings.rows.length > 0
-        ? holdings.rows.reduce((sum, h) => sum + parseFloat(h.estimated_cagr), 0) / holdings.rows.length / 100
-        : 0.07;
-      
-      const monthlyRate = avgCAGR / 12;
-      const months = year * 12;
-      const contributionValue = monthlyContribution > 0 && monthlyRate > 0
-        ? monthlyContribution * ((Math.pow(1 + monthlyRate, months) - 1) / monthlyRate)
-        : monthlyContribution * months;
-
-      // Add monthly net income contributions
-      const netIncomeContributions = monthlyNet > 0 && monthlyRate > 0
-        ? monthlyNet * ((Math.pow(1 + monthlyRate, months) - 1) / monthlyRate)
-        : monthlyNet * months;
-
-      yearlyBreakdown.push({
-        year,
-        portfolioValue: totalValue,
-        contributionsValue: contributionValue,
-        netIncomeValue: netIncomeContributions,
-        totalValue: totalValue + contributionValue + netIncomeContributions,
-        assetValues
-      });
+      if (year === 0) {
+        // Year 0: Current state, no contributions or income yet
+        const startingBalance = initialPortfolioValue;
+        previousEndingBalance = startingBalance;
+        
+        yearlyBreakdown.push({
+          year,
+          startingBalance: startingBalance,
+          yearlyContributions: 0,
+          yearlyRemainingIncome: 0,
+          portfolioGrowth: 0,
+          endingBalance: startingBalance,
+          assetValues
+        });
+      } else {
+        // Year 1+: Calculate based on previous year's ending balance
+        const startingBalance = previousEndingBalance;
+        
+        // Growth on starting balance
+        const portfolioGrowth = startingBalance * avgCAGRDecimal;
+        
+        // This year's contributions (not cumulative)
+        const thisYearContributions = yearlyContributions;
+        
+        // This year's remaining income after contributions (not cumulative)
+        const thisYearRemainingIncome = yearlyRemainingIncome;
+        
+        // Ending balance = starting + growth + contributions + remaining income
+        const endingBalance = startingBalance + portfolioGrowth + thisYearContributions + thisYearRemainingIncome;
+        
+        previousEndingBalance = endingBalance;
+        
+        yearlyBreakdown.push({
+          year,
+          startingBalance: startingBalance,
+          yearlyContributions: thisYearContributions,
+          yearlyRemainingIncome: thisYearRemainingIncome,
+          portfolioGrowth: portfolioGrowth,
+          endingBalance: endingBalance,
+          assetValues
+        });
+      }
     }
-
-    // Calculate average CAGR for summary
-    const avgCAGR = holdings.rows.length > 0
-      ? holdings.rows.reduce((sum, h) => sum + parseFloat(h.estimated_cagr), 0) / holdings.rows.length
-      : 7;
 
     return {
       projections: yearlyBreakdown,
       summary: {
-        currentValue: yearlyBreakdown[0]?.portfolioValue || 0,
-        projectedValue: yearlyBreakdown[years]?.totalValue || 0,
-        totalGrowth: (yearlyBreakdown[years]?.totalValue || 0) - (yearlyBreakdown[0]?.portfolioValue || 0),
+        currentValue: yearlyBreakdown[0]?.startingBalance || 0,
+        projectedValue: yearlyBreakdown[years]?.endingBalance || 0,
+        totalGrowth: (yearlyBreakdown[years]?.endingBalance || 0) - (yearlyBreakdown[0]?.startingBalance || 0),
         years,
         monthlyContribution,
         monthlyNetIncome: monthlyNet,
+        yearlyContributions,
+        yearlyRemainingIncome,
         averageCAGR: avgCAGR
       }
     };
