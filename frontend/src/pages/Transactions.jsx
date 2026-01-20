@@ -20,11 +20,12 @@ const formatCurrency = (value) => {
 };
 
 const formatDate = (dateStr) => {
-  return new Date(dateStr).toLocaleDateString('en-US', {
-    year: 'numeric',
-    month: 'short',
-    day: 'numeric'
-  });
+  // Parse the date string directly to avoid timezone issues
+  // Expected format: "YYYY-MM-DD" or ISO string
+  const dateOnly = dateStr.split('T')[0]; // Get just the date part
+  const [year, month, day] = dateOnly.split('-');
+  const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  return `${months[parseInt(month) - 1]} ${parseInt(day)}, ${year}`;
 };
 
 export default function Transactions() {

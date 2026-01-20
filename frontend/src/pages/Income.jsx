@@ -11,6 +11,15 @@ const formatCurrency = (value) => {
   }).format(value);
 };
 
+// Format date without timezone conversion
+const formatDate = (dateStr) => {
+  if (!dateStr) return '';
+  const dateOnly = dateStr.split('T')[0];
+  const [year, month, day] = dateOnly.split('-');
+  const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  return `${months[parseInt(month) - 1]} ${parseInt(day)}, ${year}`;
+};
+
 const frequencyLabels = {
   ONE_TIME: 'One-time',
   WEEKLY: 'Weekly',
@@ -222,8 +231,8 @@ export default function Income() {
                     {formatCurrency(record.netAmount)}
                   </td>
                   <td className="table-cell px-6 text-midnight-300 text-sm">
-                    {new Date(record.startDate).toLocaleDateString()}
-                    {record.endDate && ` - ${new Date(record.endDate).toLocaleDateString()}`}
+                    {formatDate(record.startDate)}
+                    {record.endDate && ` - ${formatDate(record.endDate)}`}
                   </td>
                   <td className="table-cell px-6 text-right">
                     <button

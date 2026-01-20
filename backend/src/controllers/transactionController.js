@@ -3,6 +3,18 @@ const { validationResult } = require('express-validator');
 const taxCalculator = require('../services/taxCalculator');
 const { getOrCreateAsset } = require('./assetController');
 
+// Helper function to normalize date to avoid timezone issues
+// Ensures the date is stored as the exact date intended
+const normalizeDate = (dateString) => {
+  // If it's already a proper date string (YYYY-MM-DD), return as-is
+  if (/^\d{4}-\d{2}-\d{2}$/.test(dateString)) {
+    return dateString;
+  }
+  // If it includes time, extract just the date part
+  const date = new Date(dateString);
+  return date.toISOString().split('T')[0];
+};
+
 // Create a transaction (buy or sell)
 exports.createTransaction = async (req, res) => {
   const client = await pool.connect();
@@ -24,6 +36,9 @@ exports.createTransaction = async (req, res) => {
       notes 
     } = req.body;
 
+    // Normalize the date to prevent timezone issues
+    const normalizedDate = normalizeDate(transactionDate);
+
     await client.query('BEGIN');
 
     // Get or create asset
@@ -38,7 +53,7 @@ exports.createTransaction = async (req, res) => {
        (user_id, asset_id, transaction_type, quantity, price_per_unit, total_amount, fees, transaction_date, notes)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
        RETURNING *`,
-      [req.user.id, asset.id, transactionType, quantity, pricePerUnit, totalAmount, fees, transactionDate, notes]
+      [req.user.id, asset.id, transactionType, quantity, pricePerUnit, totalAmount, fees, normalizedDate, notes]
     );
 
     const transaction = txResult.rows[0];
@@ -54,7 +69,7 @@ exports.createTransaction = async (req, res) => {
         quantity,
         pricePerUnit,
         fees,
-        transactionDate,
+        normalizedDate,
         client  // Pass the database client for transaction consistency
       );
       result.taxLot = taxLot;
@@ -66,7 +81,7 @@ exports.createTransaction = async (req, res) => {
         asset.id,
         quantity,
         pricePerUnit,
-        transactionDate
+        normalizedDate
       );
       result.realizedGains = realizedGains;
     }

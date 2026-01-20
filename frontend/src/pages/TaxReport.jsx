@@ -10,6 +10,15 @@ const formatCurrency = (value) => {
   }).format(value);
 };
 
+// Format date without timezone conversion
+const formatDate = (dateStr) => {
+  if (!dateStr) return '';
+  const dateOnly = dateStr.split('T')[0];
+  const [year, month, day] = dateOnly.split('-');
+  const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  return `${months[parseInt(month) - 1]} ${parseInt(day)}, ${year}`;
+};
+
 export default function TaxReport() {
   const { taxSummary, costBasis, fetchTaxSummary, fetchCostBasis, isLoading } = usePortfolioStore();
   const [selectedYear, setSelectedYear] = useState(new Date().getFullYear());
@@ -269,7 +278,7 @@ export default function TaxReport() {
                     <tr key={i} className="hover:bg-midnight-800/30 transition-colors">
                       <td className="table-cell px-6 font-medium text-white">{lot.symbol}</td>
                       <td className="table-cell px-6 text-midnight-300">
-                        {new Date(lot.purchaseDate).toLocaleDateString()}
+                        {formatDate(lot.purchaseDate)}
                       </td>
                       <td className="table-cell px-6 text-right font-mono text-midnight-300">
                         {lot.originalQuantity.toFixed(2)}
@@ -322,7 +331,7 @@ export default function TaxReport() {
                     <tr key={i} className="hover:bg-midnight-800/30 transition-colors">
                       <td className="table-cell px-6 font-medium text-white">{lot.symbol}</td>
                       <td className="table-cell px-6 text-midnight-300">
-                        {new Date(lot.purchaseDate).toLocaleDateString()}
+                        {formatDate(lot.purchaseDate)}
                       </td>
                       <td className="table-cell px-6 text-right font-mono text-midnight-300">
                         {lot.originalQuantity.toFixed(6)}

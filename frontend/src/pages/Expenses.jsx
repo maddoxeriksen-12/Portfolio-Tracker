@@ -14,6 +14,14 @@ const formatCurrency = (value) => {
 
 const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
+// Format date without timezone conversion
+const formatDate = (dateStr) => {
+  if (!dateStr) return '';
+  const dateOnly = dateStr.split('T')[0];
+  const [year, month, day] = dateOnly.split('-');
+  return `${months[parseInt(month) - 1]} ${parseInt(day)}, ${year}`;
+};
+
 export default function Expenses() {
   const { expenses, fetchExpenses, createExpense, deleteExpense } = usePortfolioStore();
   const [showModal, setShowModal] = useState(false);
@@ -341,7 +349,7 @@ export default function Expenses() {
                   className="hover:bg-midnight-800/30 transition-colors"
                 >
                   <td className="table-cell px-6 text-midnight-300">
-                    {new Date(expense.expenseDate).toLocaleDateString()}
+                    {formatDate(expense.expenseDate)}
                   </td>
                   <td className="table-cell px-6">
                     <div>
