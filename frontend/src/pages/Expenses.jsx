@@ -127,13 +127,23 @@ export default function Expenses() {
   const yearActual = yearTotals.actual;
   const yearProjected = yearTotals.projected;
 
-  // Chart data - separate actual and projected for stacked bar chart
-  const barData = monthlyData.map(m => ({
-    month: months[m.month - 1],
-    actual: m.actual || m.total,
-    projected: m.projected || 0,
-    total: m.total
-  }));
+  // Chart data - show actual for past/current months, forecast for future months (not both)
+  const currentMonth = new Date().getMonth() + 1;
+  const currentYear = new Date().getFullYear();
+  
+  const barData = monthlyData.map(m => {
+    const isFutureMonth = selectedYear > currentYear || 
+                          (selectedYear === currentYear && m.month > currentMonth);
+    
+    return {
+      month: months[m.month - 1],
+      // For future months: only show forecast (no actual)
+      // For current/past months: only show actual (no forecast)
+      actual: isFutureMonth ? 0 : (m.actual || 0),
+      projected: isFutureMonth ? (m.projected || 0) : 0,
+      total: isFutureMonth ? (m.projected || 0) : (m.actual || 0)
+    };
+  });
 
   const pieData = currentMonthData.categories.map(c => ({
     name: c.name,
