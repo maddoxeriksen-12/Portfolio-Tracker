@@ -121,6 +121,16 @@ export default function Projections() {
               </div>
               <p className="text-xs text-midnight-400">From income - expenses</p>
             </div>
+
+            <div className="space-y-2">
+              <label className="block text-sm font-medium text-midnight-300">Average CAGR</label>
+              <div className="input-field bg-midnight-700/30 cursor-not-allowed">
+                <span className="text-midnight-200 font-mono">
+                  {(projections?.summary?.averageCAGR || 7).toFixed(2)}%
+                </span>
+              </div>
+              <p className="text-xs text-midnight-400">Used for contribution growth</p>
+            </div>
           </div>
 
           {/* Asset CAGR Settings */}

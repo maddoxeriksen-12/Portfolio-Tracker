@@ -80,6 +80,11 @@ class ProjectionCalculatorService {
       });
     }
 
+    // Calculate average CAGR for summary
+    const avgCAGR = holdings.rows.length > 0
+      ? holdings.rows.reduce((sum, h) => sum + parseFloat(h.estimated_cagr), 0) / holdings.rows.length
+      : 7;
+
     return {
       projections: yearlyBreakdown,
       summary: {
@@ -88,7 +93,8 @@ class ProjectionCalculatorService {
         totalGrowth: (yearlyBreakdown[years]?.totalValue || 0) - (yearlyBreakdown[0]?.portfolioValue || 0),
         years,
         monthlyContribution,
-        monthlyNetIncome: monthlyNet
+        monthlyNetIncome: monthlyNet,
+        averageCAGR: avgCAGR
       }
     };
   }
