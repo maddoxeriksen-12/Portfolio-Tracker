@@ -55,6 +55,9 @@ class ProjectionCalculatorService {
       ? holdings.rows.reduce((sum, h) => sum + parseFloat(h.estimated_cagr), 0) / holdings.rows.length
       : 7;
     const avgCAGRDecimal = avgCAGR / 100;
+    
+    // Calculate monthly rate from annual CAGR for monthly compounding
+    const monthlyRate = Math.pow(1 + avgCAGRDecimal, 1/12) - 1;
 
     // Calculate projections year by year
     const yearlyBreakdown = [];
@@ -89,12 +92,22 @@ class ProjectionCalculatorService {
       
       // Get monthly contribution for this year (default to 0 if not specified)
       const monthlyContribution = yearlyContributionsMap[calendarYear] || 0;
-      const thisYearContributions = monthlyContribution * 12;
+      
+      // Calculate the future value of monthly contributions with monthly compounding
+      // Using the ordinary annuity formula: FV = PMT * [((1 + r)^n - 1) / r]
+      // Each monthly contribution grows for the remaining months in the year
+      let compoundedContributions = 0;
+      if (monthlyContribution > 0 && monthlyRate > 0) {
+        compoundedContributions = monthlyContribution * ((Math.pow(1 + monthlyRate, 12) - 1) / monthlyRate);
+      } else if (monthlyContribution > 0) {
+        // If rate is 0, no compounding
+        compoundedContributions = monthlyContribution * 12;
+      }
       
       // Calculate remaining income (yearly income - expenses - contributions)
       const yearlyExpenses = avgMonthlyExpenses * 12;
       const yearlyNetIncome = yearlyIncome - yearlyExpenses;
-      const thisYearRemainingIncome = Math.max(0, yearlyNetIncome - thisYearContributions);
+      const thisYearRemainingIncome = Math.max(0, yearlyNetIncome - (monthlyContribution * 12));
 
       if (yearOffset === 0) {
         // Current year: Show current state
@@ -118,11 +131,11 @@ class ProjectionCalculatorService {
         // Future years: Calculate based on previous year's ending balance
         const startingBalance = previousEndingBalance;
         
-        // Growth on starting balance
-        const portfolioGrowth = startingBalance * avgCAGRDecimal;
+        // Growth on starting balance (compounded monthly over 12 months)
+        const portfolioGrowth = startingBalance * (Math.pow(1 + monthlyRate, 12) - 1);
         
-        // Ending balance = starting + growth + contributions + remaining income
-        const endingBalance = startingBalance + portfolioGrowth + thisYearContributions + thisYearRemainingIncome;
+        // Ending balance = starting balance grown monthly + compounded contributions + remaining income
+        const endingBalance = startingBalance + portfolioGrowth + compoundedContributions + thisYearRemainingIncome;
         
         previousEndingBalance = endingBalance;
         
@@ -130,7 +143,7 @@ class ProjectionCalculatorService {
           yearOffset,
           calendarYear,
           startingBalance: startingBalance,
-          yearlyContributions: thisYearContributions,
+          yearlyContributions: compoundedContributions,
           yearlyIncome: yearlyIncome,
           yearlyExpenses: yearlyExpenses,
           yearlyRemainingIncome: thisYearRemainingIncome,
