@@ -466,7 +466,7 @@ export default function Projections() {
       <div className="glass-card p-6 border-l-4 border-accent-500">
         <h4 className="text-sm font-semibold text-white mb-2">About These Projections</h4>
         <p className="text-sm text-midnight-300">
-          <strong>Monthly Compounding:</strong> Both your portfolio and contributions compound monthly using the average CAGR. 
+          <strong>Monthly Compounding:</strong> Your monthly contributions compound monthly using the average CAGR. 
           Each monthly contribution grows for its remaining months in the year (Month 1 grows 11 months, Month 2 grows 10 months, etc.).
           <br /><br />
           <strong>Income:</strong> Calculated from your income records—add future income sources with start dates to model promotions. 
