@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { motion } from 'framer-motion';
-import { TrendingUp, Calculator, Calendar, DollarSign, Settings2 } from 'lucide-react';
-import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, LineChart, Line, Legend } from 'recharts';
+import { TrendingUp, Calculator, Calendar, DollarSign, Settings2, Edit3, Check } from 'lucide-react';
+import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend } from 'recharts';
 import usePortfolioStore from '../store/portfolioStore';
 
 const formatCurrency = (value) => {
@@ -29,21 +29,25 @@ const formatCurrencyFull = (value) => {
 export default function Projections() {
   const { projections, assets, fetchProjections, fetchOverview, setAssetCAGR } = usePortfolioStore();
   const [years, setYears] = useState(10);
-  const [monthlyContribution, setMonthlyContribution] = useState(() => {
+  const [yearlyContributions, setYearlyContributions] = useState(() => {
     // Load from localStorage on initial render
-    const saved = localStorage.getItem('projectionMonthlyContribution');
-    return saved ? parseFloat(saved) : 0;
+    const saved = localStorage.getItem('projectionYearlyContributions');
+    return saved ? JSON.parse(saved) : {};
   });
   const [assetCAGRs, setAssetCAGRs] = useState({});
   const [showSettings, setShowSettings] = useState(false);
+  const [editingYear, setEditingYear] = useState(null);
+  const [editValue, setEditValue] = useState('');
+
+  const currentYear = new Date().getFullYear();
 
   useEffect(() => {
     fetchOverview();
   }, []);
 
   useEffect(() => {
-    fetchProjections(years, monthlyContribution);
-  }, [years, monthlyContribution]);
+    fetchProjections(years, yearlyContributions);
+  }, [years, yearlyContributions]);
 
   // Load asset CAGRs from projection data when available
   useEffect(() => {
@@ -60,11 +64,12 @@ export default function Projections() {
     }
   }, [projections, assets]);
 
-  const handleContributionChange = (value) => {
+  const handleContributionChange = (calendarYear, value) => {
     const newValue = parseFloat(value) || 0;
-    setMonthlyContribution(newValue);
+    const newContributions = { ...yearlyContributions, [calendarYear]: newValue };
+    setYearlyContributions(newContributions);
     // Save to localStorage
-    localStorage.setItem('projectionMonthlyContribution', newValue.toString());
+    localStorage.setItem('projectionYearlyContributions', JSON.stringify(newContributions));
   };
 
   const handleCAGRChange = async (assetId, cagr) => {
@@ -72,18 +77,29 @@ export default function Projections() {
     setAssetCAGRs({ ...assetCAGRs, [assetId]: cagrValue });
     // Save to backend (persists in database)
     await setAssetCAGR(assetId, cagrValue);
-    fetchProjections(years, monthlyContribution);
+    fetchProjections(years, yearlyContributions);
   };
 
-  // Chart data - using new field names
+  const startEditingContribution = (calendarYear, currentValue) => {
+    setEditingYear(calendarYear);
+    setEditValue(currentValue.toString());
+  };
+
+  const saveContribution = (calendarYear) => {
+    handleContributionChange(calendarYear, editValue);
+    setEditingYear(null);
+    setEditValue('');
+  };
+
+  // Chart data - using actual calendar years
   const chartData = projections?.projections?.map(p => ({
-    year: p.year === 0 ? 'Now' : `Year ${p.year}`,
-    startingBalance: p.startingBalance,
+    year: p.calendarYear.toString(),
     endingBalance: p.endingBalance
   })) || [];
 
   // Asset breakdown for the final year
   const finalYearAssets = projections?.projections?.[years]?.assetValues || [];
+  const finalCalendarYear = currentYear + years;
 
   return (
     <div className="space-y-6 animate-in">
@@ -111,7 +127,7 @@ export default function Projections() {
         >
           <h3 className="text-lg font-display font-semibold text-white mb-4">Projection Settings</h3>
           
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
             <div className="space-y-2">
               <label className="block text-sm font-medium text-midnight-300">Time Horizon</label>
               <div className="flex items-center gap-2">
@@ -128,18 +144,6 @@ export default function Projections() {
             </div>
 
             <div className="space-y-2">
-              <label className="block text-sm font-medium text-midnight-300">Monthly Contribution</label>
-              <input
-                type="number"
-                value={monthlyContribution}
-                onChange={(e) => handleContributionChange(e.target.value)}
-                className="input-field"
-                placeholder="500"
-              />
-              <p className="text-xs text-midnight-400">Saved automatically</p>
-            </div>
-
-            <div className="space-y-2">
               <label className="block text-sm font-medium text-midnight-300">Net Monthly Income</label>
               <div className="input-field bg-midnight-700/30 cursor-not-allowed">
                 <span className="text-midnight-200">
@@ -150,13 +154,23 @@ export default function Projections() {
             </div>
 
             <div className="space-y-2">
+              <label className="block text-sm font-medium text-midnight-300">Monthly Expenses</label>
+              <div className="input-field bg-midnight-700/30 cursor-not-allowed">
+                <span className="text-midnight-200">
+                  {formatCurrencyFull(projections?.summary?.monthlyExpenses || 0)}
+                </span>
+              </div>
+              <p className="text-xs text-midnight-400">12-month average</p>
+            </div>
+
+            <div className="space-y-2">
               <label className="block text-sm font-medium text-midnight-300">Average CAGR</label>
               <div className="input-field bg-midnight-700/30 cursor-not-allowed">
                 <span className="text-midnight-200 font-mono">
                   {(projections?.summary?.averageCAGR || 7).toFixed(2)}%
                 </span>
               </div>
-              <p className="text-xs text-midnight-400">Used for contribution growth</p>
+              <p className="text-xs text-midnight-400">Used for portfolio growth</p>
             </div>
           </div>
 
@@ -197,7 +211,7 @@ export default function Projections() {
         >
           <div className="flex items-center gap-2 text-midnight-400 mb-2">
             <DollarSign className="w-4 h-4" />
-            <span className="text-sm">Current Value</span>
+            <span className="text-sm">Current Value ({currentYear})</span>
           </div>
           <p className="text-2xl font-display font-bold text-white">
             {formatCurrencyFull(projections?.summary?.currentValue || 0)}
@@ -212,7 +226,7 @@ export default function Projections() {
         >
           <div className="flex items-center gap-2 text-midnight-400 mb-2">
             <TrendingUp className="w-4 h-4" />
-            <span className="text-sm">Projected Value ({years}Y)</span>
+            <span className="text-sm">Projected Value ({finalCalendarYear})</span>
           </div>
           <p className="text-2xl font-display font-bold text-gain">
             {formatCurrencyFull(projections?.summary?.projectedValue || 0)}
@@ -289,6 +303,7 @@ export default function Projections() {
                   color: '#d9e2ec'
                 }}
                 formatter={(value) => formatCurrencyFull(value)}
+                labelFormatter={(label) => `Year ${label}`}
               />
               <Legend />
               <Area
@@ -304,7 +319,7 @@ export default function Projections() {
         </div>
       </motion.div>
 
-      {/* Yearly Breakdown */}
+      {/* Yearly Breakdown with Editable Contributions */}
       <motion.div
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
@@ -313,6 +328,7 @@ export default function Projections() {
       >
         <div className="p-6 border-b border-midnight-800/50">
           <h3 className="text-lg font-display font-semibold text-white">Yearly Breakdown</h3>
+          <p className="text-sm text-midnight-400 mt-1">Click the edit icon to set monthly contributions for each year</p>
         </div>
         <div className="overflow-x-auto">
           <table className="w-full">
@@ -320,7 +336,8 @@ export default function Projections() {
               <tr className="border-b border-midnight-800/50">
                 <th className="table-header px-6 py-4">Year</th>
                 <th className="table-header px-6 py-4 text-right">Starting Balance</th>
-                <th className="table-header px-6 py-4 text-right">Contributions</th>
+                <th className="table-header px-6 py-4 text-right">Monthly Contribution</th>
+                <th className="table-header px-6 py-4 text-right">Yearly Income</th>
                 <th className="table-header px-6 py-4 text-right">Remaining Income</th>
                 <th className="table-header px-6 py-4 text-right">Ending Balance</th>
               </tr>
@@ -328,17 +345,53 @@ export default function Projections() {
             <tbody>
               {projections?.projections?.map((p, index) => (
                 <tr 
-                  key={p.year} 
-                  className={`hover:bg-midnight-800/30 transition-colors ${p.year === years ? 'bg-accent-500/5' : ''}`}
+                  key={p.calendarYear} 
+                  className={`hover:bg-midnight-800/30 transition-colors ${p.yearOffset === years ? 'bg-accent-500/5' : ''}`}
                 >
                   <td className="table-cell px-6 font-medium text-white">
-                    {p.year === 0 ? 'Current' : `Year ${p.year}`}
+                    {p.calendarYear}
+                    {p.yearOffset === 0 && <span className="text-xs text-midnight-400 ml-2">(Current)</span>}
                   </td>
                   <td className="table-cell px-6 text-right font-mono text-midnight-200">
                     {formatCurrencyFull(p.startingBalance)}
                   </td>
-                  <td className="table-cell px-6 text-right font-mono text-accent-400">
-                    {p.yearlyContributions > 0 ? `+${formatCurrencyFull(p.yearlyContributions)}` : '—'}
+                  <td className="table-cell px-6 text-right">
+                    {p.yearOffset === 0 ? (
+                      <span className="text-midnight-500">—</span>
+                    ) : editingYear === p.calendarYear ? (
+                      <div className="flex items-center justify-end gap-2">
+                        <span className="text-midnight-400">$</span>
+                        <input
+                          type="number"
+                          value={editValue}
+                          onChange={(e) => setEditValue(e.target.value)}
+                          onKeyDown={(e) => e.key === 'Enter' && saveContribution(p.calendarYear)}
+                          className="input-field w-24 text-right py-1 px-2"
+                          autoFocus
+                        />
+                        <button
+                          onClick={() => saveContribution(p.calendarYear)}
+                          className="p-1 rounded hover:bg-accent-500/20 text-accent-400"
+                        >
+                          <Check className="w-4 h-4" />
+                        </button>
+                      </div>
+                    ) : (
+                      <div className="flex items-center justify-end gap-2">
+                        <span className="font-mono text-accent-400">
+                          {p.monthlyContribution > 0 ? `$${p.monthlyContribution.toLocaleString()}/mo` : '—'}
+                        </span>
+                        <button
+                          onClick={() => startEditingContribution(p.calendarYear, p.monthlyContribution)}
+                          className="p-1 rounded hover:bg-midnight-700/50 text-midnight-400 hover:text-midnight-200"
+                        >
+                          <Edit3 className="w-3 h-3" />
+                        </button>
+                      </div>
+                    )}
+                  </td>
+                  <td className="table-cell px-6 text-right font-mono text-midnight-300">
+                    {formatCurrencyFull(p.yearlyIncome)}
                   </td>
                   <td className="table-cell px-6 text-right font-mono text-accent-400">
                     {p.yearlyRemainingIncome > 0 ? `+${formatCurrencyFull(p.yearlyRemainingIncome)}` : '—'}
@@ -362,7 +415,7 @@ export default function Projections() {
           className="glass-card p-6"
         >
           <h3 className="text-lg font-display font-semibold text-white mb-4">
-            Projected Asset Values (Year {years})
+            Projected Asset Values ({finalCalendarYear})
           </h3>
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
             {finalYearAssets.map((asset, index) => (
@@ -398,9 +451,9 @@ export default function Projections() {
       <div className="glass-card p-6 border-l-4 border-accent-500">
         <h4 className="text-sm font-semibold text-white mb-2">About These Projections</h4>
         <p className="text-sm text-midnight-300">
-          These projections are based on your estimated CAGR (Compound Annual Growth Rate) for each asset. 
-          They assume consistent growth and don't account for market volatility, inflation, or taxes. 
-          Actual results will vary. Use these projections for planning purposes only.
+          Income is calculated from your income records in the Income section—add future income sources with start dates 
+          to model promotions and salary changes. Remaining Income = Yearly Income - Expenses - Contributions. 
+          Projections assume consistent growth and don't account for market volatility, inflation, or taxes.
         </p>
       </div>
     </div>

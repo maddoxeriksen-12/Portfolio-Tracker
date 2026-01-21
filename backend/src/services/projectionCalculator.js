@@ -2,7 +2,11 @@ const pool = require('../db/pool');
 
 class ProjectionCalculatorService {
   // Calculate future portfolio value based on CAGR estimates
-  async calculateProjections(userId, years = 10, monthlyContribution = 0) {
+  // yearlyContributions: object mapping calendar year to monthly contribution amount
+  // e.g., { 2026: 500, 2027: 750, 2028: 1000 }
+  async calculateProjections(userId, years = 10, yearlyContributionsMap = {}) {
+    const currentYear = new Date().getFullYear();
+    
     // Get current holdings with projections
     const holdings = await pool.query(
       `SELECT 
@@ -20,21 +24,37 @@ class ProjectionCalculatorService {
       [userId]
     );
 
-    // Get income after expenses (monthly net)
-    const incomeExpense = await this.getMonthlyNetIncome(userId);
-    const monthlyNet = incomeExpense.monthlyNetIncome;
+    // Get all income records (including future ones for projections)
+    const incomeRecords = await pool.query(
+      `SELECT id, source, net_amount, frequency, start_date, end_date
+       FROM income_records
+       WHERE user_id = $1
+       ORDER BY start_date`,
+      [userId]
+    );
+
+    // Get average monthly expenses (for calculating remaining income)
+    const expenseResult = await pool.query(
+      `SELECT 
+         AVG(monthly_total) as avg_monthly_expenses
+       FROM (
+         SELECT 
+           DATE_TRUNC('month', expense_date) as month,
+           SUM(amount) as monthly_total
+         FROM expenses
+         WHERE user_id = $1 
+           AND expense_date >= CURRENT_DATE - INTERVAL '12 months'
+         GROUP BY DATE_TRUNC('month', expense_date)
+       ) monthly_expenses`,
+      [userId]
+    );
+    const avgMonthlyExpenses = parseFloat(expenseResult.rows[0]?.avg_monthly_expenses) || 0;
 
     // Calculate average CAGR
     const avgCAGR = holdings.rows.length > 0
       ? holdings.rows.reduce((sum, h) => sum + parseFloat(h.estimated_cagr), 0) / holdings.rows.length
       : 7;
     const avgCAGRDecimal = avgCAGR / 100;
-
-    // Calculate yearly contributions and remaining net income
-    const yearlyContributions = monthlyContribution * 12;
-    const yearlyNetIncome = monthlyNet * 12;
-    // Remaining income after contributions (if net income > contributions, otherwise 0)
-    const yearlyRemainingIncome = Math.max(0, yearlyNetIncome - yearlyContributions);
 
     // Calculate projections year by year
     const yearlyBreakdown = [];
@@ -43,14 +63,15 @@ class ProjectionCalculatorService {
     // Calculate initial portfolio value
     const initialPortfolioValue = holdings.rows.reduce((sum, h) => sum + parseFloat(h.cost_basis), 0);
 
-    for (let year = 0; year <= years; year++) {
+    for (let yearOffset = 0; yearOffset <= years; yearOffset++) {
+      const calendarYear = currentYear + yearOffset;
       const assetValues = [];
 
       // Calculate asset values for this year
       for (const holding of holdings.rows) {
         const cagr = parseFloat(holding.estimated_cagr) / 100;
         const currentValue = parseFloat(holding.cost_basis);
-        const futureValue = currentValue * Math.pow(1 + cagr, year);
+        const futureValue = currentValue * Math.pow(1 + cagr, yearOffset);
         
         assetValues.push({
           symbol: holding.symbol,
@@ -63,32 +84,42 @@ class ProjectionCalculatorService {
         });
       }
 
-      if (year === 0) {
-        // Year 0: Current state, no contributions or income yet
+      // Calculate income for this specific calendar year
+      const yearlyIncome = this.calculateYearlyIncome(incomeRecords.rows, calendarYear);
+      
+      // Get monthly contribution for this year (default to 0 if not specified)
+      const monthlyContribution = yearlyContributionsMap[calendarYear] || 0;
+      const thisYearContributions = monthlyContribution * 12;
+      
+      // Calculate remaining income (yearly income - expenses - contributions)
+      const yearlyExpenses = avgMonthlyExpenses * 12;
+      const yearlyNetIncome = yearlyIncome - yearlyExpenses;
+      const thisYearRemainingIncome = Math.max(0, yearlyNetIncome - thisYearContributions);
+
+      if (yearOffset === 0) {
+        // Current year: Show current state
         const startingBalance = initialPortfolioValue;
         previousEndingBalance = startingBalance;
         
         yearlyBreakdown.push({
-          year,
+          yearOffset,
+          calendarYear,
           startingBalance: startingBalance,
           yearlyContributions: 0,
+          yearlyIncome: yearlyIncome,
+          yearlyExpenses: yearlyExpenses,
           yearlyRemainingIncome: 0,
           portfolioGrowth: 0,
           endingBalance: startingBalance,
+          monthlyContribution: 0,
           assetValues
         });
       } else {
-        // Year 1+: Calculate based on previous year's ending balance
+        // Future years: Calculate based on previous year's ending balance
         const startingBalance = previousEndingBalance;
         
         // Growth on starting balance
         const portfolioGrowth = startingBalance * avgCAGRDecimal;
-        
-        // This year's contributions (not cumulative)
-        const thisYearContributions = yearlyContributions;
-        
-        // This year's remaining income after contributions (not cumulative)
-        const thisYearRemainingIncome = yearlyRemainingIncome;
         
         // Ending balance = starting + growth + contributions + remaining income
         const endingBalance = startingBalance + portfolioGrowth + thisYearContributions + thisYearRemainingIncome;
@@ -96,16 +127,24 @@ class ProjectionCalculatorService {
         previousEndingBalance = endingBalance;
         
         yearlyBreakdown.push({
-          year,
+          yearOffset,
+          calendarYear,
           startingBalance: startingBalance,
           yearlyContributions: thisYearContributions,
+          yearlyIncome: yearlyIncome,
+          yearlyExpenses: yearlyExpenses,
           yearlyRemainingIncome: thisYearRemainingIncome,
           portfolioGrowth: portfolioGrowth,
           endingBalance: endingBalance,
+          monthlyContribution: monthlyContribution,
           assetValues
         });
       }
     }
+
+    // Get current monthly net income for summary
+    const currentMonthlyIncome = this.calculateYearlyIncome(incomeRecords.rows, currentYear) / 12;
+    const currentMonthlyNet = currentMonthlyIncome - avgMonthlyExpenses;
 
     return {
       projections: yearlyBreakdown,
@@ -114,13 +153,68 @@ class ProjectionCalculatorService {
         projectedValue: yearlyBreakdown[years]?.endingBalance || 0,
         totalGrowth: (yearlyBreakdown[years]?.endingBalance || 0) - (yearlyBreakdown[0]?.startingBalance || 0),
         years,
-        monthlyContribution,
-        monthlyNetIncome: monthlyNet,
-        yearlyContributions,
-        yearlyRemainingIncome,
+        currentYear,
+        monthlyNetIncome: currentMonthlyNet,
+        monthlyExpenses: avgMonthlyExpenses,
         averageCAGR: avgCAGR
       }
     };
+  }
+
+  // Calculate yearly income based on income records active during that year
+  calculateYearlyIncome(incomeRecords, calendarYear) {
+    const yearStart = new Date(calendarYear, 0, 1);
+    const yearEnd = new Date(calendarYear, 11, 31);
+    
+    let totalYearlyIncome = 0;
+
+    for (const record of incomeRecords) {
+      const startDate = new Date(record.start_date);
+      const endDate = record.end_date ? new Date(record.end_date) : null;
+      
+      // Check if this income record is active during this calendar year
+      if (startDate > yearEnd) continue; // Hasn't started yet
+      if (endDate && endDate < yearStart) continue; // Already ended
+      
+      // Calculate monthly equivalent
+      let monthlyAmount = 0;
+      const netAmount = parseFloat(record.net_amount);
+      
+      switch (record.frequency) {
+        case 'ONE_TIME':
+          // One-time income only counts if it's in this year
+          if (startDate >= yearStart && startDate <= yearEnd) {
+            totalYearlyIncome += netAmount;
+          }
+          continue;
+        case 'WEEKLY':
+          monthlyAmount = netAmount * 52 / 12;
+          break;
+        case 'BI_WEEKLY':
+          monthlyAmount = netAmount * 26 / 12;
+          break;
+        case 'MONTHLY':
+          monthlyAmount = netAmount;
+          break;
+        case 'QUARTERLY':
+          monthlyAmount = netAmount / 3;
+          break;
+        case 'ANNUALLY':
+          monthlyAmount = netAmount / 12;
+          break;
+        default:
+          monthlyAmount = netAmount;
+      }
+      
+      // Calculate how many months this income is active in this year
+      const activeStartMonth = startDate > yearStart ? startDate.getMonth() : 0;
+      const activeEndMonth = (endDate && endDate < yearEnd) ? endDate.getMonth() : 11;
+      const activeMonths = activeEndMonth - activeStartMonth + 1;
+      
+      totalYearlyIncome += monthlyAmount * activeMonths;
+    }
+    
+    return totalYearlyIncome;
   }
 
   // Calculate projections for specific assets

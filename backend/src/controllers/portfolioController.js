@@ -311,12 +311,30 @@ exports.getReturnsByAsset = async (req, res) => {
 // Get future projections
 exports.getProjections = async (req, res) => {
   try {
-    const { years = 10, monthlyContribution = 0 } = req.query;
+    const { years = 10, yearlyContributions } = req.query;
+
+    // Parse yearlyContributions from JSON string to object
+    // Format: { "2026": 500, "2027": 750, ... }
+    let contributionsMap = {};
+    if (yearlyContributions) {
+      try {
+        contributionsMap = JSON.parse(yearlyContributions);
+        // Convert string keys to numbers and values to floats
+        const parsed = {};
+        for (const [year, amount] of Object.entries(contributionsMap)) {
+          parsed[parseInt(year)] = parseFloat(amount) || 0;
+        }
+        contributionsMap = parsed;
+      } catch (e) {
+        // If parsing fails, use empty object
+        contributionsMap = {};
+      }
+    }
 
     const projections = await projectionCalculator.calculateProjections(
       req.user.id,
       parseInt(years),
-      parseFloat(monthlyContribution)
+      contributionsMap
     );
 
     res.json(projections);

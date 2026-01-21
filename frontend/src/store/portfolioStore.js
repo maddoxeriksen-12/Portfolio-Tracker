@@ -159,9 +159,12 @@ const usePortfolioStore = create((set, get) => ({
   },
 
   // Fetch projections
-  fetchProjections: async (years = 10, monthlyContribution = 0) => {
+  // yearlyContributions: object mapping calendar year to monthly contribution
+  // e.g., { 2026: 500, 2027: 750 }
+  fetchProjections: async (years = 10, yearlyContributions = {}) => {
     try {
-      const response = await api.get(`/portfolio/projections?years=${years}&monthlyContribution=${monthlyContribution}`);
+      const contributionsParam = encodeURIComponent(JSON.stringify(yearlyContributions));
+      const response = await api.get(`/portfolio/projections?years=${years}&yearlyContributions=${contributionsParam}`);
       set({ projections: response.data });
       return response.data;
     } catch (error) {
