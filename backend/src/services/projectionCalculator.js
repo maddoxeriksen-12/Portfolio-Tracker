@@ -94,14 +94,18 @@ class ProjectionCalculatorService {
       const monthlyContribution = yearlyContributionsMap[calendarYear] || 0;
       
       // Calculate the future value of monthly contributions with monthly compounding
-      // Using the ordinary annuity formula: FV = PMT * [((1 + r)^n - 1) / r]
-      // Each monthly contribution grows for the remaining months in the year
+      // Each month's contribution grows for the remaining months in the year
+      // Month 1 contribution: grows for 11 months at monthlyRate
+      // Month 2 contribution: grows for 10 months at monthlyRate
+      // ...
+      // Month 12 contribution: grows for 0 months (no growth)
       let compoundedContributions = 0;
-      if (monthlyContribution > 0 && monthlyRate > 0) {
-        compoundedContributions = monthlyContribution * ((Math.pow(1 + monthlyRate, 12) - 1) / monthlyRate);
-      } else if (monthlyContribution > 0) {
-        // If rate is 0, no compounding
-        compoundedContributions = monthlyContribution * 12;
+      if (monthlyContribution > 0) {
+        for (let month = 1; month <= 12; month++) {
+          const monthsToGrow = 12 - month;
+          const grownContribution = monthlyContribution * Math.pow(1 + monthlyRate, monthsToGrow);
+          compoundedContributions += grownContribution;
+        }
       }
       
       // Calculate remaining income (yearly income - expenses - contributions)
@@ -118,7 +122,9 @@ class ProjectionCalculatorService {
           yearOffset,
           calendarYear,
           startingBalance: startingBalance,
+          rawContributions: 0,
           yearlyContributions: 0,
+          contributionGrowth: 0,
           yearlyIncome: yearlyIncome,
           yearlyExpenses: yearlyExpenses,
           yearlyRemainingIncome: 0,
@@ -143,7 +149,9 @@ class ProjectionCalculatorService {
           yearOffset,
           calendarYear,
           startingBalance: startingBalance,
-          yearlyContributions: compoundedContributions,
+          rawContributions: monthlyContribution * 12,  // Uncompounded total
+          yearlyContributions: compoundedContributions, // Compounded value at year end
+          contributionGrowth: compoundedContributions - (monthlyContribution * 12), // Growth from compounding
           yearlyIncome: yearlyIncome,
           yearlyExpenses: yearlyExpenses,
           yearlyRemainingIncome: thisYearRemainingIncome,
