@@ -28,7 +28,12 @@ class ProjectionCalculatorService {
     // Get retirement accounts if included
     let retirementData = { accounts: [], totalValue: 0, totalMonthlyContrib: 0, avgCagr: 7 };
     if (includeRetirement) {
-      retirementData = await this.getRetirementSummary(userId);
+      try {
+        retirementData = await this.getRetirementSummary(userId);
+      } catch (retirementError) {
+        console.error('Error fetching retirement data:', retirementError.message);
+        // Continue with empty retirement data if there's an error
+      }
     }
 
     // Get all income records (including future ones for projections)
