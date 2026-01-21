@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { motion } from 'framer-motion';
+import { motion, AnimatePresence } from 'framer-motion';
 import {
   TrendingUp,
   TrendingDown,
@@ -8,7 +8,17 @@ import {
   BarChart3,
   ArrowUpRight,
   ArrowDownRight,
-  RefreshCw
+  RefreshCw,
+  Building2,
+  Plus,
+  X,
+  Edit3,
+  Trash2,
+  ChevronDown,
+  ChevronUp,
+  DollarSign,
+  Calendar,
+  Percent
 } from 'lucide-react';
 import { PieChart as RechartsPie, Pie, Cell, ResponsiveContainer, AreaChart, Area, XAxis, YAxis, Tooltip } from 'recharts';
 import usePortfolioStore from '../store/portfolioStore';
@@ -29,20 +39,98 @@ const formatPercent = (value) => {
 
 const COLORS = ['#2a97ff', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#06b6d4', '#ec4899'];
 
+const ACCOUNT_TYPES = [
+  { value: 'ROTH_IRA', label: 'Roth IRA' },
+  { value: '401K', label: '401(k)' },
+  { value: 'TRADITIONAL_IRA', label: 'Traditional IRA' },
+  { value: '403B', label: '403(b)' },
+  { value: '457B', label: '457(b)' },
+  { value: 'SEP_IRA', label: 'SEP IRA' },
+  { value: 'SIMPLE_IRA', label: 'SIMPLE IRA' },
+  { value: 'PENSION', label: 'Pension' },
+  { value: 'HSA', label: 'HSA' },
+  { value: 'OTHER', label: 'Other' }
+];
+
+const CONTRIBUTION_FREQUENCIES = [
+  { value: 'WEEKLY', label: 'Weekly' },
+  { value: 'BI_WEEKLY', label: 'Bi-Weekly' },
+  { value: 'MONTHLY', label: 'Monthly' },
+  { value: 'QUARTERLY', label: 'Quarterly' },
+  { value: 'ANNUALLY', label: 'Annually' },
+  { value: 'ONE_TIME', label: 'One-Time' }
+];
+
+const CONTRIBUTION_TYPES = [
+  { value: 'PERSONAL', label: 'Personal' },
+  { value: 'EMPLOYER_MATCH', label: 'Employer Match' },
+  { value: 'EMPLOYER_CONTRIBUTION', label: 'Employer Contribution' }
+];
+
 export default function Dashboard() {
-  const { overview, assets, fetchOverview, fetchReturns, isLoading } = usePortfolioStore();
+  const { 
+    overview, 
+    assets, 
+    fetchOverview, 
+    fetchReturns, 
+    isLoading,
+    retirementAccounts,
+    retirementSummary,
+    fetchRetirementAccounts,
+    createRetirementAccount,
+    updateRetirementAccount,
+    deleteRetirementAccount,
+    addRetirementContribution,
+    deleteRetirementContribution
+  } = usePortfolioStore();
+  
   const [returns, setReturns] = useState(null);
+  const [todayReturn, setTodayReturn] = useState(null);
   const [timeframe, setTimeframe] = useState('1Y');
+  const [showRetirementModal, setShowRetirementModal] = useState(false);
+  const [editingAccount, setEditingAccount] = useState(null);
+  const [expandedAccount, setExpandedAccount] = useState(null);
+  const [showContributionModal, setShowContributionModal] = useState(null);
+  const [accountForm, setAccountForm] = useState({
+    accountName: '',
+    accountType: '401K',
+    currentValue: '',
+    estimatedCagr: '7',
+    employerName: '',
+    notes: ''
+  });
+  const [contributionForm, setContributionForm] = useState({
+    contributionType: 'PERSONAL',
+    amount: '',
+    frequency: 'MONTHLY',
+    startDate: new Date().toISOString().split('T')[0],
+    endDate: '',
+    notes: ''
+  });
 
   useEffect(() => {
     fetchOverview();
+    fetchRetirementAccounts();
     loadReturns('1Y');
+    loadTodayReturn();
   }, []);
 
   const loadReturns = async (tf) => {
     setTimeframe(tf);
     const data = await fetchReturns(tf);
     setReturns(data);
+  };
+
+  const loadTodayReturn = async () => {
+    const data = await fetchReturns('1W');
+    // Estimate today's return as 1/5 of weekly for simplicity
+    // In a real app, you'd have daily price data
+    if (data?.returns) {
+      setTodayReturn({
+        value: data.returns.totalReturn / 5,
+        percent: data.returns.returnPercent / 5
+      });
+    }
   };
 
   const timeframes = ['1W', '1M', '3M', '6M', 'YTD', '1Y', '3Y', '5Y', 'ALL'];
@@ -71,6 +159,105 @@ export default function Dashboard() {
   ];
 
   const isPositive = (overview?.totalGainLoss || 0) >= 0;
+  const todayIsPositive = (todayReturn?.value || 0) >= 0;
+
+  const handleCreateAccount = async () => {
+    const result = await createRetirementAccount({
+      accountName: accountForm.accountName,
+      accountType: accountForm.accountType,
+      currentValue: parseFloat(accountForm.currentValue) || 0,
+      estimatedCagr: parseFloat(accountForm.estimatedCagr) || 7,
+      employerName: accountForm.employerName,
+      notes: accountForm.notes
+    });
+
+    if (result.success) {
+      setShowRetirementModal(false);
+      setAccountForm({
+        accountName: '',
+        accountType: '401K',
+        currentValue: '',
+        estimatedCagr: '7',
+        employerName: '',
+        notes: ''
+      });
+    }
+  };
+
+  const handleUpdateAccount = async () => {
+    const result = await updateRetirementAccount(editingAccount.id, {
+      accountName: accountForm.accountName,
+      accountType: accountForm.accountType,
+      currentValue: parseFloat(accountForm.currentValue) || 0,
+      estimatedCagr: parseFloat(accountForm.estimatedCagr) || 7,
+      employerName: accountForm.employerName,
+      notes: accountForm.notes
+    });
+
+    if (result.success) {
+      setEditingAccount(null);
+      setShowRetirementModal(false);
+      setAccountForm({
+        accountName: '',
+        accountType: '401K',
+        currentValue: '',
+        estimatedCagr: '7',
+        employerName: '',
+        notes: ''
+      });
+    }
+  };
+
+  const handleDeleteAccount = async (id) => {
+    if (confirm('Are you sure you want to delete this retirement account?')) {
+      await deleteRetirementAccount(id);
+    }
+  };
+
+  const handleAddContribution = async (accountId) => {
+    const result = await addRetirementContribution(accountId, {
+      contributionType: contributionForm.contributionType,
+      amount: parseFloat(contributionForm.amount) || 0,
+      frequency: contributionForm.frequency,
+      startDate: contributionForm.startDate,
+      endDate: contributionForm.endDate || null,
+      notes: contributionForm.notes
+    });
+
+    if (result.success) {
+      setShowContributionModal(null);
+      setContributionForm({
+        contributionType: 'PERSONAL',
+        amount: '',
+        frequency: 'MONTHLY',
+        startDate: new Date().toISOString().split('T')[0],
+        endDate: '',
+        notes: ''
+      });
+    }
+  };
+
+  const handleDeleteContribution = async (contributionId) => {
+    if (confirm('Delete this contribution?')) {
+      await deleteRetirementContribution(contributionId);
+    }
+  };
+
+  const openEditAccount = (account) => {
+    setEditingAccount(account);
+    setAccountForm({
+      accountName: account.accountName || account.account_name,
+      accountType: account.accountType || account.account_type,
+      currentValue: account.currentValue?.toString() || '',
+      estimatedCagr: account.estimatedCagr?.toString() || '7',
+      employerName: account.employerName || account.employer_name || '',
+      notes: account.notes || ''
+    });
+    setShowRetirementModal(true);
+  };
+
+  // Calculate combined net worth
+  const totalNetWorth = (overview?.totalCurrentValue || 0) + (retirementSummary?.totalValue || 0);
 
   return (
     <div className="space-y-6 animate-in">
@@ -81,7 +268,7 @@ export default function Dashboard() {
           <p className="text-midnight-400 mt-1">Your portfolio at a glance</p>
         </div>
         <button
-          onClick={() => fetchOverview()}
+          onClick={() => { fetchOverview(); fetchRetirementAccounts(); loadTodayReturn(); }}
           disabled={isLoading}
           className="btn-secondary flex items-center gap-2"
         >
@@ -90,25 +277,53 @@ export default function Dashboard() {
         </button>
       </div>
 
-      {/* Stats Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+      {/* Stats Cards - Now with 5 cards including Today's Return */}
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
+        {/* Total Net Worth */}
         <motion.div
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 0.1 }}
-          className="stat-card"
+          className="stat-card lg:col-span-1"
         >
           <div className="flex items-center justify-between">
-            <span className="stat-label">Total Value</span>
+            <span className="stat-label">Net Worth</span>
             <div className="p-2 rounded-lg bg-accent-500/10">
               <Wallet className="w-5 h-5 text-accent-400" />
             </div>
           </div>
           <p className="stat-value text-white">
-            {formatCurrency(overview?.totalCurrentValue || 0)}
+            {formatCurrency(totalNetWorth)}
+          </p>
+          <p className="text-xs text-midnight-400">Portfolio + Retirement</p>
+        </motion.div>
+
+        {/* Today's Return */}
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.15 }}
+          className="stat-card"
+        >
+          <div className="flex items-center justify-between">
+            <span className="stat-label">Today's Return</span>
+            <div className={`p-2 rounded-lg ${todayIsPositive ? 'bg-gain/10' : 'bg-loss/10'}`}>
+              {todayIsPositive ? (
+                <TrendingUp className="w-5 h-5 text-gain" />
+              ) : (
+                <TrendingDown className="w-5 h-5 text-loss" />
+              )}
+            </div>
+          </div>
+          <p className={`stat-value ${todayIsPositive ? 'text-gain' : 'text-loss'}`}>
+            {formatCurrency(todayReturn?.value || 0)}
+          </p>
+          <p className={`text-sm ${todayIsPositive ? 'text-gain' : 'text-loss'}`}>
+            {formatPercent(todayReturn?.percent || 0)}
           </p>
         </motion.div>
 
+        {/* Total Return */}
         <motion.div
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
@@ -133,6 +348,7 @@ export default function Dashboard() {
           </p>
         </motion.div>
 
+        {/* Stocks */}
         <motion.div
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
@@ -153,6 +369,7 @@ export default function Dashboard() {
           </p>
         </motion.div>
 
+        {/* Crypto */}
         <motion.div
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
@@ -173,6 +390,199 @@ export default function Dashboard() {
           </p>
         </motion.div>
       </div>
+
+      {/* Retirement Accounts Section */}
+      <motion.div
+        initial={{ opacity: 0, y: 20 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: 0.45 }}
+        className="glass-card p-6"
+      >
+        <div className="flex items-center justify-between mb-6">
+          <div className="flex items-center gap-3">
+            <div className="p-2 rounded-lg bg-violet-500/10">
+              <Building2 className="w-6 h-6 text-violet-400" />
+            </div>
+            <div>
+              <h3 className="text-lg font-display font-semibold text-white">Retirement Accounts</h3>
+              <p className="text-sm text-midnight-400">
+                {retirementAccounts?.length || 0} account{retirementAccounts?.length !== 1 ? 's' : ''} · {formatCurrency(retirementSummary?.totalValue || 0)} total
+              </p>
+            </div>
+          </div>
+          <button
+            onClick={() => {
+              setEditingAccount(null);
+              setAccountForm({
+                accountName: '',
+                accountType: '401K',
+                currentValue: '',
+                estimatedCagr: '7',
+                employerName: '',
+                notes: ''
+              });
+              setShowRetirementModal(true);
+            }}
+            className="btn-primary flex items-center gap-2"
+          >
+            <Plus className="w-4 h-4" />
+            Add Account
+          </button>
+        </div>
+
+        {retirementAccounts && retirementAccounts.length > 0 ? (
+          <div className="space-y-3">
+            {retirementAccounts.map((account, index) => (
+              <motion.div
+                key={account.id}
+                initial={{ opacity: 0, x: -20 }}
+                animate={{ opacity: 1, x: 0 }}
+                transition={{ delay: index * 0.05 }}
+                className="bg-midnight-800/50 rounded-xl border border-midnight-700/50 overflow-hidden"
+              >
+                <div 
+                  className="p-4 cursor-pointer hover:bg-midnight-800/80 transition-colors"
+                  onClick={() => setExpandedAccount(expandedAccount === account.id ? null : account.id)}
+                >
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-4">
+                      <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-violet-500/20 to-purple-600/20 flex items-center justify-center">
+                        <span className="text-lg font-bold text-violet-400">
+                          {(account.accountTypeLabel || account.account_type)?.slice(0, 2)}
+                        </span>
+                      </div>
+                      <div>
+                        <h4 className="font-medium text-white">{account.accountName || account.account_name}</h4>
+                        <p className="text-xs text-midnight-400">
+                          {account.accountTypeLabel || account.account_type}
+                          {(account.employerName || account.employer_name) && ` · ${account.employerName || account.employer_name}`}
+                        </p>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-6">
+                      <div className="text-right">
+                        <p className="text-lg font-semibold text-white">{formatCurrency(account.currentValue || account.current_value || 0)}</p>
+                        <p className="text-xs text-accent-400">
+                          +{formatCurrency(account.monthlyContribution || 0)}/mo
+                        </p>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <button
+                          onClick={(e) => { e.stopPropagation(); openEditAccount(account); }}
+                          className="p-2 rounded-lg hover:bg-midnight-700/50 text-midnight-400 hover:text-white transition-colors"
+                        >
+                          <Edit3 className="w-4 h-4" />
+                        </button>
+                        <button
+                          onClick={(e) => { e.stopPropagation(); handleDeleteAccount(account.id); }}
+                          className="p-2 rounded-lg hover:bg-loss/10 text-midnight-400 hover:text-loss transition-colors"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                        {expandedAccount === account.id ? (
+                          <ChevronUp className="w-5 h-5 text-midnight-400" />
+                        ) : (
+                          <ChevronDown className="w-5 h-5 text-midnight-400" />
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <AnimatePresence>
+                  {expandedAccount === account.id && (
+                    <motion.div
+                      initial={{ height: 0, opacity: 0 }}
+                      animate={{ height: 'auto', opacity: 1 }}
+                      exit={{ height: 0, opacity: 0 }}
+                      transition={{ duration: 0.2 }}
+                      className="border-t border-midnight-700/50"
+                    >
+                      <div className="p-4 space-y-4">
+                        {/* Account Details */}
+                        <div className="grid grid-cols-3 gap-4">
+                          <div className="p-3 bg-midnight-900/50 rounded-lg">
+                            <p className="text-xs text-midnight-400 mb-1">Estimated CAGR</p>
+                            <p className="font-mono text-white">{account.estimatedCagr || account.estimated_cagr || 7}%</p>
+                          </div>
+                          <div className="p-3 bg-midnight-900/50 rounded-lg">
+                            <p className="text-xs text-midnight-400 mb-1">Yearly Contribution</p>
+                            <p className="font-mono text-accent-400">{formatCurrency(account.yearlyContribution || 0)}</p>
+                          </div>
+                          <div className="p-3 bg-midnight-900/50 rounded-lg">
+                            <p className="text-xs text-midnight-400 mb-1">10Y Projection</p>
+                            <p className="font-mono text-gain">
+                              {formatCurrency(
+                                (account.currentValue || 0) * Math.pow(1 + (account.estimatedCagr || 7) / 100, 10) +
+                                (account.yearlyContribution || 0) * ((Math.pow(1 + (account.estimatedCagr || 7) / 100, 10) - 1) / ((account.estimatedCagr || 7) / 100))
+                              )}
+                            </p>
+                          </div>
+                        </div>
+
+                        {/* Contributions */}
+                        <div>
+                          <div className="flex items-center justify-between mb-3">
+                            <h5 className="text-sm font-medium text-midnight-300">Contributions</h5>
+                            <button
+                              onClick={() => setShowContributionModal(account.id)}
+                              className="text-xs text-accent-400 hover:text-accent-300 flex items-center gap-1"
+                            >
+                              <Plus className="w-3 h-3" />
+                              Add Contribution
+                            </button>
+                          </div>
+                          {account.contributions && account.contributions.length > 0 ? (
+                            <div className="space-y-2">
+                              {account.contributions.map((contrib) => (
+                                <div 
+                                  key={contrib.id}
+                                  className="flex items-center justify-between p-3 bg-midnight-900/30 rounded-lg"
+                                >
+                                  <div className="flex items-center gap-3">
+                                    <div className={`w-2 h-2 rounded-full ${
+                                      contrib.contributionType === 'PERSONAL' || contrib.contribution_type === 'PERSONAL' ? 'bg-accent-400' :
+                                      'bg-gain'
+                                    }`} />
+                                    <div>
+                                      <p className="text-sm text-white">
+                                        {formatCurrency(contrib.amount)} / {contrib.frequency?.toLowerCase().replace('_', '-')}
+                                      </p>
+                                      <p className="text-xs text-midnight-400">
+                                        {contrib.contributionType === 'PERSONAL' || contrib.contribution_type === 'PERSONAL' ? 'Personal' : 'Employer'}
+                                      </p>
+                                    </div>
+                                  </div>
+                                  <button
+                                    onClick={() => handleDeleteContribution(contrib.id)}
+                                    className="p-1 rounded hover:bg-loss/10 text-midnight-400 hover:text-loss"
+                                  >
+                                    <Trash2 className="w-3 h-3" />
+                                  </button>
+                                </div>
+                              ))}
+                            </div>
+                          ) : (
+                            <p className="text-sm text-midnight-500 text-center py-4">
+                              No contributions set up yet
+                            </p>
+                          )}
+                        </div>
+                      </div>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+              </motion.div>
+            ))}
+          </div>
+        ) : (
+          <div className="text-center py-12">
+            <Building2 className="w-12 h-12 text-midnight-600 mx-auto mb-4" />
+            <h4 className="text-lg font-medium text-white mb-2">No retirement accounts yet</h4>
+            <p className="text-midnight-400 mb-4">Add your 401(k), IRA, or other retirement accounts to track your progress</p>
+          </div>
+        )}
+      </motion.div>
 
       {/* Charts Row */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -385,6 +795,242 @@ export default function Dashboard() {
           </table>
         </div>
       </motion.div>
+
+      {/* Retirement Account Modal */}
+      <AnimatePresence>
+        {showRetirementModal && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4"
+            onClick={() => setShowRetirementModal(false)}
+          >
+            <motion.div
+              initial={{ scale: 0.95, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.95, opacity: 0 }}
+              onClick={(e) => e.stopPropagation()}
+              className="glass-card w-full max-w-lg p-6"
+            >
+              <div className="flex items-center justify-between mb-6">
+                <h3 className="text-xl font-display font-semibold text-white">
+                  {editingAccount ? 'Edit Retirement Account' : 'Add Retirement Account'}
+                </h3>
+                <button
+                  onClick={() => setShowRetirementModal(false)}
+                  className="p-2 rounded-lg hover:bg-midnight-700/50 text-midnight-400"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-sm font-medium text-midnight-300 mb-2">Account Name</label>
+                  <input
+                    type="text"
+                    value={accountForm.accountName}
+                    onChange={(e) => setAccountForm({ ...accountForm, accountName: e.target.value })}
+                    placeholder="e.g., Fidelity 401(k)"
+                    className="input-field"
+                  />
+                </div>
+
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-sm font-medium text-midnight-300 mb-2">Account Type</label>
+                    <select
+                      value={accountForm.accountType}
+                      onChange={(e) => setAccountForm({ ...accountForm, accountType: e.target.value })}
+                      className="input-field"
+                    >
+                      {ACCOUNT_TYPES.map(type => (
+                        <option key={type.value} value={type.value}>{type.label}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-midnight-300 mb-2">Current Value</label>
+                    <div className="relative">
+                      <DollarSign className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-midnight-400" />
+                      <input
+                        type="number"
+                        value={accountForm.currentValue}
+                        onChange={(e) => setAccountForm({ ...accountForm, currentValue: e.target.value })}
+                        placeholder="0.00"
+                        className="input-field pl-9"
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-sm font-medium text-midnight-300 mb-2">Estimated CAGR</label>
+                    <div className="relative">
+                      <Percent className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-midnight-400" />
+                      <input
+                        type="number"
+                        step="0.1"
+                        value={accountForm.estimatedCagr}
+                        onChange={(e) => setAccountForm({ ...accountForm, estimatedCagr: e.target.value })}
+                        placeholder="7"
+                        className="input-field pl-9"
+                      />
+                    </div>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-midnight-300 mb-2">Employer (Optional)</label>
+                    <input
+                      type="text"
+                      value={accountForm.employerName}
+                      onChange={(e) => setAccountForm({ ...accountForm, employerName: e.target.value })}
+                      placeholder="e.g., Google"
+                      className="input-field"
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-midnight-300 mb-2">Notes (Optional)</label>
+                  <textarea
+                    value={accountForm.notes}
+                    onChange={(e) => setAccountForm({ ...accountForm, notes: e.target.value })}
+                    placeholder="Any additional notes..."
+                    className="input-field resize-none h-20"
+                  />
+                </div>
+
+                <div className="flex gap-3 pt-4">
+                  <button
+                    onClick={() => setShowRetirementModal(false)}
+                    className="btn-secondary flex-1"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={editingAccount ? handleUpdateAccount : handleCreateAccount}
+                    className="btn-primary flex-1"
+                  >
+                    {editingAccount ? 'Save Changes' : 'Add Account'}
+                  </button>
+                </div>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Contribution Modal */}
+      <AnimatePresence>
+        {showContributionModal && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4"
+            onClick={() => setShowContributionModal(null)}
+          >
+            <motion.div
+              initial={{ scale: 0.95, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.95, opacity: 0 }}
+              onClick={(e) => e.stopPropagation()}
+              className="glass-card w-full max-w-md p-6"
+            >
+              <div className="flex items-center justify-between mb-6">
+                <h3 className="text-xl font-display font-semibold text-white">Add Contribution</h3>
+                <button
+                  onClick={() => setShowContributionModal(null)}
+                  className="p-2 rounded-lg hover:bg-midnight-700/50 text-midnight-400"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              <div className="space-y-4">
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-sm font-medium text-midnight-300 mb-2">Type</label>
+                    <select
+                      value={contributionForm.contributionType}
+                      onChange={(e) => setContributionForm({ ...contributionForm, contributionType: e.target.value })}
+                      className="input-field"
+                    >
+                      {CONTRIBUTION_TYPES.map(type => (
+                        <option key={type.value} value={type.value}>{type.label}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-midnight-300 mb-2">Amount</label>
+                    <div className="relative">
+                      <DollarSign className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-midnight-400" />
+                      <input
+                        type="number"
+                        value={contributionForm.amount}
+                        onChange={(e) => setContributionForm({ ...contributionForm, amount: e.target.value })}
+                        placeholder="0.00"
+                        className="input-field pl-9"
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-midnight-300 mb-2">Frequency</label>
+                  <select
+                    value={contributionForm.frequency}
+                    onChange={(e) => setContributionForm({ ...contributionForm, frequency: e.target.value })}
+                    className="input-field"
+                  >
+                    {CONTRIBUTION_FREQUENCIES.map(freq => (
+                      <option key={freq.value} value={freq.value}>{freq.label}</option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-sm font-medium text-midnight-300 mb-2">Start Date</label>
+                    <input
+                      type="date"
+                      value={contributionForm.startDate}
+                      onChange={(e) => setContributionForm({ ...contributionForm, startDate: e.target.value })}
+                      className="input-field"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-midnight-300 mb-2">End Date (Optional)</label>
+                    <input
+                      type="date"
+                      value={contributionForm.endDate}
+                      onChange={(e) => setContributionForm({ ...contributionForm, endDate: e.target.value })}
+                      className="input-field"
+                    />
+                  </div>
+                </div>
+
+                <div className="flex gap-3 pt-4">
+                  <button
+                    onClick={() => setShowContributionModal(null)}
+                    className="btn-secondary flex-1"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={() => handleAddContribution(showContributionModal)}
+                    className="btn-primary flex-1"
+                  >
+                    Add Contribution
+                  </button>
+                </div>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }

@@ -12,6 +12,7 @@ const taxRoutes = require('./routes/tax');
 const incomeRoutes = require('./routes/income');
 const expenseRoutes = require('./routes/expenses');
 const portfolioRoutes = require('./routes/portfolio');
+const retirementRoutes = require('./routes/retirement');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -136,6 +137,7 @@ app.use('/api/tax', taxRoutes);
 app.use('/api/income', incomeRoutes);
 app.use('/api/expenses', expenseRoutes);
 app.use('/api/portfolio', portfolioRoutes);
+app.use('/api/retirement', retirementRoutes);
 
 // ===================
 // ERROR HANDLING

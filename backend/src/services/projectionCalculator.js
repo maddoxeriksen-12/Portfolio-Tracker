@@ -4,7 +4,8 @@ class ProjectionCalculatorService {
   // Calculate future portfolio value based on CAGR estimates
   // yearlyContributions: object mapping calendar year to monthly contribution amount
   // e.g., { 2026: 500, 2027: 750, 2028: 1000 }
-  async calculateProjections(userId, years = 10, yearlyContributionsMap = {}) {
+  // includeRetirement: whether to include retirement accounts in projections
+  async calculateProjections(userId, years = 10, yearlyContributionsMap = {}, includeRetirement = true) {
     const currentYear = new Date().getFullYear();
     
     // Get current holdings with projections
@@ -23,6 +24,12 @@ class ProjectionCalculatorService {
        GROUP BY tl.asset_id, a.symbol, a.asset_type, ap.estimated_cagr`,
       [userId]
     );
+
+    // Get retirement accounts if included
+    let retirementData = { accounts: [], totalValue: 0, totalMonthlyContrib: 0, avgCagr: 7 };
+    if (includeRetirement) {
+      retirementData = await this.getRetirementSummary(userId);
+    }
 
     // Get all income records (including future ones for projections)
     const incomeRecords = await pool.query(
@@ -167,8 +174,30 @@ class ProjectionCalculatorService {
     const currentMonthlyIncome = this.calculateYearlyIncome(incomeRecords.rows, currentYear) / 12;
     const currentMonthlyNet = currentMonthlyIncome - avgMonthlyExpenses;
 
+    // Calculate retirement projections if included
+    let retirementProjections = [];
+    if (includeRetirement && retirementData.accounts.length > 0) {
+      retirementProjections = this.calculateRetirementYearlyProjections(
+        retirementData.accounts,
+        years,
+        currentYear
+      );
+    }
+
+    // Combine portfolio and retirement projections
+    const combinedProjections = yearlyBreakdown.map((portfolioYear, index) => {
+      const retirementYear = retirementProjections[index] || { totalValue: 0, yearlyContributions: 0 };
+      return {
+        ...portfolioYear,
+        retirementValue: retirementYear.totalValue,
+        retirementContributions: retirementYear.yearlyContributions,
+        retirementGrowth: retirementYear.yearlyGrowth || 0,
+        combinedValue: portfolioYear.endingBalance + retirementYear.totalValue
+      };
+    });
+
     return {
-      projections: yearlyBreakdown,
+      projections: combinedProjections,
       summary: {
         currentValue: yearlyBreakdown[0]?.startingBalance || 0,
         projectedValue: yearlyBreakdown[years]?.endingBalance || 0,
@@ -177,7 +206,14 @@ class ProjectionCalculatorService {
         currentYear,
         monthlyNetIncome: currentMonthlyNet,
         monthlyExpenses: avgMonthlyExpenses,
-        averageCAGR: avgCAGR
+        averageCAGR: avgCAGR,
+        // Retirement summary
+        retirementCurrentValue: retirementData.totalValue,
+        retirementProjectedValue: retirementProjections[years]?.totalValue || retirementData.totalValue,
+        retirementMonthlyContributions: retirementData.totalMonthlyContrib,
+        // Combined totals
+        combinedCurrentValue: (yearlyBreakdown[0]?.startingBalance || 0) + retirementData.totalValue,
+        combinedProjectedValue: (yearlyBreakdown[years]?.endingBalance || 0) + (retirementProjections[years]?.totalValue || retirementData.totalValue)
       }
     };
   }
@@ -428,6 +464,165 @@ class ProjectionCalculatorService {
     }
 
     return report;
+  }
+
+  // Get retirement account summary for projections
+  async getRetirementSummary(userId) {
+    const accounts = await pool.query(
+      `SELECT 
+         ra.id,
+         ra.account_name,
+         ra.account_type,
+         ra.current_value,
+         ra.estimated_cagr
+       FROM retirement_accounts ra
+       WHERE ra.user_id = $1`,
+      [userId]
+    );
+
+    if (accounts.rows.length === 0) {
+      return { accounts: [], totalValue: 0, totalMonthlyContrib: 0, avgCagr: 7 };
+    }
+
+    // Get contributions
+    const contributions = await pool.query(
+      `SELECT 
+         rc.account_id,
+         rc.contribution_type,
+         rc.amount,
+         rc.frequency,
+         rc.start_date,
+         rc.end_date
+       FROM retirement_contributions rc
+       JOIN retirement_accounts ra ON rc.account_id = ra.id
+       WHERE ra.user_id = $1`,
+      [userId]
+    );
+
+    // Group contributions by account
+    const contribsByAccount = {};
+    contributions.rows.forEach(c => {
+      if (!contribsByAccount[c.account_id]) {
+        contribsByAccount[c.account_id] = [];
+      }
+      contribsByAccount[c.account_id].push(c);
+    });
+
+    // Calculate totals
+    let totalValue = 0;
+    let totalMonthlyContrib = 0;
+    let totalCagr = 0;
+
+    const accountsWithContribs = accounts.rows.map(account => {
+      const accountContribs = contribsByAccount[account.id] || [];
+      let monthlyContrib = 0;
+
+      accountContribs.forEach(contrib => {
+        if (contrib.end_date && new Date(contrib.end_date) < new Date()) return;
+        const amount = parseFloat(contrib.amount);
+        switch (contrib.frequency) {
+          case 'WEEKLY': monthlyContrib += amount * 52 / 12; break;
+          case 'BI_WEEKLY': monthlyContrib += amount * 26 / 12; break;
+          case 'MONTHLY': monthlyContrib += amount; break;
+          case 'QUARTERLY': monthlyContrib += amount / 3; break;
+          case 'ANNUALLY': monthlyContrib += amount / 12; break;
+        }
+      });
+
+      totalValue += parseFloat(account.current_value);
+      totalMonthlyContrib += monthlyContrib;
+      totalCagr += parseFloat(account.estimated_cagr);
+
+      return {
+        id: account.id,
+        accountName: account.account_name,
+        accountType: account.account_type,
+        currentValue: parseFloat(account.current_value),
+        estimatedCagr: parseFloat(account.estimated_cagr),
+        contributions: accountContribs,
+        monthlyContribution: monthlyContrib
+      };
+    });
+
+    return {
+      accounts: accountsWithContribs,
+      totalValue,
+      totalMonthlyContrib,
+      avgCagr: accounts.rows.length > 0 ? totalCagr / accounts.rows.length : 7
+    };
+  }
+
+  // Calculate retirement projections year by year
+  calculateRetirementYearlyProjections(accounts, years, currentYear) {
+    const projections = [];
+    const accountValues = {};
+
+    // Initialize account values
+    accounts.forEach(a => {
+      accountValues[a.id] = a.currentValue;
+    });
+
+    for (let yearOffset = 0; yearOffset <= years; yearOffset++) {
+      const calendarYear = currentYear + yearOffset;
+      let yearTotal = 0;
+      let yearContributions = 0;
+      let yearGrowth = 0;
+
+      accounts.forEach(account => {
+        const cagr = account.estimatedCagr / 100;
+        const monthlyRate = Math.pow(1 + cagr, 1/12) - 1;
+
+        if (yearOffset === 0) {
+          yearTotal += account.currentValue;
+        } else {
+          const prevValue = accountValues[account.id];
+
+          // Calculate yearly contributions
+          let yearlyContrib = 0;
+          account.contributions.forEach(contrib => {
+            const startDate = new Date(contrib.start_date);
+            const endDate = contrib.end_date ? new Date(contrib.end_date) : null;
+            if (startDate.getFullYear() > calendarYear) return;
+            if (endDate && endDate.getFullYear() < calendarYear) return;
+
+            const amount = parseFloat(contrib.amount);
+            switch (contrib.frequency) {
+              case 'WEEKLY': yearlyContrib += amount * 52; break;
+              case 'BI_WEEKLY': yearlyContrib += amount * 26; break;
+              case 'MONTHLY': yearlyContrib += amount * 12; break;
+              case 'QUARTERLY': yearlyContrib += amount * 4; break;
+              case 'ANNUALLY': yearlyContrib += amount; break;
+            }
+          });
+
+          // Portfolio growth
+          const portfolioGrowth = prevValue * (Math.pow(1 + monthlyRate, 12) - 1);
+
+          // Contributions compounded monthly
+          const monthlyContrib = yearlyContrib / 12;
+          let compoundedContribs = 0;
+          for (let month = 1; month <= 12; month++) {
+            compoundedContribs += monthlyContrib * Math.pow(1 + monthlyRate, 12 - month);
+          }
+
+          const newValue = prevValue + portfolioGrowth + compoundedContribs;
+          accountValues[account.id] = newValue;
+          yearTotal += newValue;
+          yearContributions += yearlyContrib;
+          yearGrowth += portfolioGrowth + (compoundedContribs - yearlyContrib);
+        }
+      });
+
+      projections.push({
+        yearOffset,
+        calendarYear,
+        totalValue: yearTotal,
+        yearlyContributions,
+        yearlyGrowth: yearGrowth
+      });
+    }
+
+    return projections;
   }
 }
 

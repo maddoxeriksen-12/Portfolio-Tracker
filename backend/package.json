@@ -7,6 +7,9 @@
     "start": "node src/index.js",
     "dev": "nodemon src/index.js",
     "migrate": "node src/db/migrate.js",
+    "migrate:fresh": "node src/db/migrate.js fresh",
+    "migrate:all": "node src/db/migrate.js all",
+    "migrate:run": "node src/db/migrate.js run",
     "seed": "node src/db/seed.js"
   },
   "dependencies": {

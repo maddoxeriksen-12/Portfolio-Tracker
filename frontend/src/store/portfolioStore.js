@@ -11,6 +11,8 @@ const usePortfolioStore = create((set, get) => ({
   income: [],
   expenses: [],
   projections: null,
+  retirementAccounts: [],
+  retirementSummary: null,
   
   // UI state
   isLoading: false,
@@ -189,6 +191,89 @@ const usePortfolioStore = create((set, get) => ({
       return response.data;
     } catch (error) {
       set({ error: error.response?.data?.error || 'Failed to fetch returns' });
+    }
+  },
+
+  // Retirement Accounts
+  fetchRetirementAccounts: async () => {
+    try {
+      const response = await api.get('/retirement');
+      set({ 
+        retirementAccounts: response.data.accounts,
+        retirementSummary: response.data.summary
+      });
+      return response.data;
+    } catch (error) {
+      set({ error: error.response?.data?.error || 'Failed to fetch retirement accounts' });
+    }
+  },
+
+  createRetirementAccount: async (accountData) => {
+    try {
+      const response = await api.post('/retirement', accountData);
+      await get().fetchRetirementAccounts();
+      return { success: true, data: response.data };
+    } catch (error) {
+      return { success: false, error: error.response?.data?.error || 'Failed to create account' };
+    }
+  },
+
+  updateRetirementAccount: async (id, accountData) => {
+    try {
+      const response = await api.put(`/retirement/${id}`, accountData);
+      await get().fetchRetirementAccounts();
+      return { success: true, data: response.data };
+    } catch (error) {
+      return { success: false, error: error.response?.data?.error || 'Failed to update account' };
+    }
+  },
+
+  deleteRetirementAccount: async (id) => {
+    try {
+      await api.delete(`/retirement/${id}`);
+      await get().fetchRetirementAccounts();
+      return { success: true };
+    } catch (error) {
+      return { success: false, error: error.response?.data?.error || 'Failed to delete account' };
+    }
+  },
+
+  addRetirementContribution: async (accountId, contributionData) => {
+    try {
+      const response = await api.post(`/retirement/${accountId}/contributions`, contributionData);
+      await get().fetchRetirementAccounts();
+      return { success: true, data: response.data };
+    } catch (error) {
+      return { success: false, error: error.response?.data?.error || 'Failed to add contribution' };
+    }
+  },
+
+  updateRetirementContribution: async (contributionId, contributionData) => {
+    try {
+      const response = await api.put(`/retirement/contributions/${contributionId}`, contributionData);
+      await get().fetchRetirementAccounts();
+      return { success: true, data: response.data };
+    } catch (error) {
+      return { success: false, error: error.response?.data?.error || 'Failed to update contribution' };
+    }
+  },
+
+  deleteRetirementContribution: async (contributionId) => {
+    try {
+      await api.delete(`/retirement/contributions/${contributionId}`);
+      await get().fetchRetirementAccounts();
+      return { success: true };
+    } catch (error) {
+      return { success: false, error: error.response?.data?.error || 'Failed to delete contribution' };
+    }
+  },
+
+  fetchRetirementProjections: async (years = 30) => {
+    try {
+      const response = await api.get(`/retirement/projections?years=${years}`);
+      return response.data;
+    } catch (error) {
+      set({ error: error.response?.data?.error || 'Failed to fetch retirement projections' });
     }
   },
 
