@@ -107,13 +107,20 @@ export default function Dashboard() {
     endDate: '',
     notes: ''
   });
+  const [showTodayReturnModal, setShowTodayReturnModal] = useState(false);
 
   useEffect(() => {
     fetchOverview();
     fetchRetirementAccounts();
     loadReturns('1Y');
-    loadTodayReturn();
   }, []);
+
+  // Recalculate today's return when overview and retirement data are available
+  useEffect(() => {
+    if (overview && retirementSummary !== undefined) {
+      loadTodayReturn();
+    }
+  }, [overview, retirementSummary]);
 
   const loadReturns = async (tf) => {
     setTimeframe(tf);
@@ -126,9 +133,34 @@ export default function Dashboard() {
     // Estimate today's return as 1/5 of weekly for simplicity
     // In a real app, you'd have daily price data
     if (data?.returns) {
+      // Calculate breakdown by asset type
+      const stocksReturn = (data.returns.stocksReturn || 0) / 5;
+      const cryptoReturn = (data.returns.cryptoReturn || 0) / 5;
+      // Retirement accounts don't have daily market fluctuations in the same way
+      // Estimate retirement return based on average daily market movement
+      const retirementReturn = (retirementSummary?.totalValue || 0) * 0.0003; // ~0.03% daily average
+      
+      const totalReturn = stocksReturn + cryptoReturn + retirementReturn;
+      const totalNetWorth = (overview?.totalCurrentValue || 0) + (retirementSummary?.totalValue || 0);
+      const totalPercent = totalNetWorth > 0 ? (totalReturn / totalNetWorth) * 100 : 0;
+      
       setTodayReturn({
-        value: data.returns.totalReturn / 5,
-        percent: data.returns.returnPercent / 5
+        value: totalReturn,
+        percent: totalPercent,
+        breakdown: {
+          stocks: {
+            value: stocksReturn,
+            percent: (overview?.stocksValue || 0) > 0 ? (stocksReturn / (overview?.stocksValue || 1)) * 100 : 0
+          },
+          crypto: {
+            value: cryptoReturn,
+            percent: (overview?.cryptoValue || 0) > 0 ? (cryptoReturn / (overview?.cryptoValue || 1)) * 100 : 0
+          },
+          retirement: {
+            value: retirementReturn,
+            percent: (retirementSummary?.totalValue || 0) > 0 ? (retirementReturn / (retirementSummary?.totalValue || 1)) * 100 : 0
+          }
+        }
       });
     }
   };
@@ -298,12 +330,13 @@ export default function Dashboard() {
           <p className="text-xs text-midnight-400">Portfolio + Retirement</p>
         </motion.div>
 
-        {/* Today's Return */}
+        {/* Today's Return - Clickable */}
         <motion.div
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 0.15 }}
-          className="stat-card"
+          className="stat-card cursor-pointer hover:border-accent-500/50 transition-colors"
+          onClick={() => setShowTodayReturnModal(true)}
         >
           <div className="flex items-center justify-between">
             <span className="stat-label">Today's Return</span>
@@ -321,6 +354,7 @@ export default function Dashboard() {
           <p className={`text-sm ${todayIsPositive ? 'text-gain' : 'text-loss'}`}>
             {formatPercent(todayReturn?.percent || 0)}
           </p>
+          <p className="text-xs text-midnight-500 mt-1">Click for breakdown</p>
         </motion.div>
 
         {/* Total Return */}
@@ -1027,6 +1061,150 @@ export default function Dashboard() {
                   </button>
                 </div>
               </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Today's Return Breakdown Modal */}
+      <AnimatePresence>
+        {showTodayReturnModal && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4"
+            onClick={() => setShowTodayReturnModal(false)}
+          >
+            <motion.div
+              initial={{ scale: 0.95, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.95, opacity: 0 }}
+              onClick={(e) => e.stopPropagation()}
+              className="glass-card w-full max-w-md p-6"
+            >
+              <div className="flex items-center justify-between mb-6">
+                <h3 className="text-xl font-display font-semibold text-white">Today's Return Breakdown</h3>
+                <button
+                  onClick={() => setShowTodayReturnModal(false)}
+                  className="p-2 rounded-lg hover:bg-midnight-700/50 text-midnight-400"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              {/* Total Return Summary */}
+              <div className={`p-4 rounded-xl mb-6 ${todayIsPositive ? 'bg-gain/10 border border-gain/20' : 'bg-loss/10 border border-loss/20'}`}>
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-sm text-midnight-400">Total Daily Return</p>
+                    <p className={`text-2xl font-display font-bold ${todayIsPositive ? 'text-gain' : 'text-loss'}`}>
+                      {formatCurrency(todayReturn?.value || 0)}
+                    </p>
+                  </div>
+                  <div className={`text-right`}>
+                    <div className={`flex items-center gap-1 ${todayIsPositive ? 'text-gain' : 'text-loss'}`}>
+                      {todayIsPositive ? (
+                        <TrendingUp className="w-5 h-5" />
+                      ) : (
+                        <TrendingDown className="w-5 h-5" />
+                      )}
+                      <span className="text-xl font-bold">{formatPercent(todayReturn?.percent || 0)}</span>
+                    </div>
+                    <p className="text-xs text-midnight-500">of net worth</p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Breakdown by Category */}
+              <div className="space-y-3">
+                {/* Stocks */}
+                <div className="p-4 bg-midnight-800/50 rounded-xl border border-midnight-700/50">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                      <div className="p-2 rounded-lg bg-accent-500/10">
+                        <BarChart3 className="w-5 h-5 text-accent-400" />
+                      </div>
+                      <div>
+                        <p className="font-medium text-white">Stocks</p>
+                        <p className="text-xs text-midnight-400">
+                          {formatCurrency(overview?.stocksValue || 0)} total
+                        </p>
+                      </div>
+                    </div>
+                    <div className="text-right">
+                      <p className={`font-mono font-semibold ${(todayReturn?.breakdown?.stocks?.value || 0) >= 0 ? 'text-gain' : 'text-loss'}`}>
+                        {(todayReturn?.breakdown?.stocks?.value || 0) >= 0 ? '+' : ''}{formatCurrency(todayReturn?.breakdown?.stocks?.value || 0)}
+                      </p>
+                      <p className={`text-sm ${(todayReturn?.breakdown?.stocks?.percent || 0) >= 0 ? 'text-gain' : 'text-loss'}`}>
+                        {formatPercent(todayReturn?.breakdown?.stocks?.percent || 0)}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Crypto */}
+                <div className="p-4 bg-midnight-800/50 rounded-xl border border-midnight-700/50">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                      <div className="p-2 rounded-lg bg-warning/10">
+                        <PieChart className="w-5 h-5 text-warning" />
+                      </div>
+                      <div>
+                        <p className="font-medium text-white">Crypto</p>
+                        <p className="text-xs text-midnight-400">
+                          {formatCurrency(overview?.cryptoValue || 0)} total
+                        </p>
+                      </div>
+                    </div>
+                    <div className="text-right">
+                      <p className={`font-mono font-semibold ${(todayReturn?.breakdown?.crypto?.value || 0) >= 0 ? 'text-gain' : 'text-loss'}`}>
+                        {(todayReturn?.breakdown?.crypto?.value || 0) >= 0 ? '+' : ''}{formatCurrency(todayReturn?.breakdown?.crypto?.value || 0)}
+                      </p>
+                      <p className={`text-sm ${(todayReturn?.breakdown?.crypto?.percent || 0) >= 0 ? 'text-gain' : 'text-loss'}`}>
+                        {formatPercent(todayReturn?.breakdown?.crypto?.percent || 0)}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Retirement */}
+                <div className="p-4 bg-midnight-800/50 rounded-xl border border-midnight-700/50">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                      <div className="p-2 rounded-lg bg-violet-500/10">
+                        <Building2 className="w-5 h-5 text-violet-400" />
+                      </div>
+                      <div>
+                        <p className="font-medium text-white">Retirement</p>
+                        <p className="text-xs text-midnight-400">
+                          {formatCurrency(retirementSummary?.totalValue || 0)} total
+                        </p>
+                      </div>
+                    </div>
+                    <div className="text-right">
+                      <p className={`font-mono font-semibold ${(todayReturn?.breakdown?.retirement?.value || 0) >= 0 ? 'text-gain' : 'text-loss'}`}>
+                        {(todayReturn?.breakdown?.retirement?.value || 0) >= 0 ? '+' : ''}{formatCurrency(todayReturn?.breakdown?.retirement?.value || 0)}
+                      </p>
+                      <p className={`text-sm ${(todayReturn?.breakdown?.retirement?.percent || 0) >= 0 ? 'text-gain' : 'text-loss'}`}>
+                        {formatPercent(todayReturn?.breakdown?.retirement?.percent || 0)}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Info note */}
+              <p className="text-xs text-midnight-500 mt-4 text-center">
+                Returns are estimated based on weekly performance data. Retirement returns are estimated using average market growth.
+              </p>
+
+              <button
+                onClick={() => setShowTodayReturnModal(false)}
+                className="btn-secondary w-full mt-4"
+              >
+                Close
+              </button>
             </motion.div>
           </motion.div>
         )}
