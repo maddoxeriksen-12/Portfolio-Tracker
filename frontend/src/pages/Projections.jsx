@@ -107,14 +107,13 @@ export default function Projections() {
     setEditValue('');
   };
 
-  // Combined chart data
-  const chartData = projections?.projections?.map((p, index) => {
-    const retirementValue = retirementProjections?.projections?.[index]?.totalValue || 0;
+  // Combined chart data - use backend's embedded retirement data to avoid duplication
+  const chartData = projections?.projections?.map((p) => {
     return {
       year: p.calendarYear.toString(),
       brokerage: p.endingBalance,
-      retirement: retirementValue,
-      combined: p.endingBalance + retirementValue
+      retirement: p.retirementValue || 0,
+      combined: p.combinedValue || p.endingBalance
     };
   }) || [];
 
@@ -122,13 +121,15 @@ export default function Projections() {
   const finalYearAssets = projections?.projections?.[years]?.assetValues || [];
   const finalCalendarYear = currentYear + years;
 
-  // Calculate combined summary
+  // Calculate combined summary - use backend's pre-calculated values to avoid duplication
   const brokerageCurrentValue = projections?.summary?.currentValue || 0;
   const brokerageProjectedValue = projections?.summary?.projectedValue || 0;
-  const retirementCurrentValue = retirementSummary?.totalValue || 0;
-  const retirementProjectedValue = retirementProjections?.summary?.projectedValue || retirementCurrentValue;
-  const combinedCurrentValue = brokerageCurrentValue + retirementCurrentValue;
-  const combinedProjectedValue = brokerageProjectedValue + retirementProjectedValue;
+  // Use backend's retirement values from the projections endpoint (already calculated there)
+  const retirementCurrentValue = projections?.summary?.retirementCurrentValue || retirementSummary?.totalValue || 0;
+  const retirementProjectedValue = projections?.summary?.retirementProjectedValue || retirementCurrentValue;
+  // Use backend's combined values if available, otherwise calculate
+  const combinedCurrentValue = projections?.summary?.combinedCurrentValue || (brokerageCurrentValue + retirementCurrentValue);
+  const combinedProjectedValue = projections?.summary?.combinedProjectedValue || (brokerageProjectedValue + retirementProjectedValue);
   const totalGrowth = combinedProjectedValue - combinedCurrentValue;
   const growthMultiple = combinedCurrentValue > 0 ? (combinedProjectedValue / combinedCurrentValue).toFixed(1) : 'N/A';
 
@@ -576,15 +577,17 @@ export default function Projections() {
         className="glass-card overflow-hidden"
       >
         <div className="p-6 border-b border-midnight-800/50">
-          <h3 className="text-lg font-display font-semibold text-white">Brokerage Yearly Breakdown</h3>
-          <p className="text-sm text-midnight-400 mt-1">Click the edit icon to set monthly contributions for each year</p>
+          <h3 className="text-lg font-display font-semibold text-white">Combined Net Worth Yearly Breakdown</h3>
+          <p className="text-sm text-midnight-400 mt-1">Starting balance includes retirement accounts. Click the edit icon to set monthly contributions for each year.</p>
         </div>
         <div className="overflow-x-auto">
           <table className="w-full">
             <thead>
               <tr className="border-b border-midnight-800/50">
                 <th className="table-header px-6 py-4">Year</th>
-                <th className="table-header px-6 py-4 text-right">Starting Balance</th>
+                <th className="table-header px-6 py-4 text-right">
+                  <span title="Brokerage + Retirement starting balance">Starting Balance</span>
+                </th>
                 <th className="table-header px-6 py-4 text-right">
                   <span title="Growth on starting balance compounded monthly">Portfolio Growth</span>
                 </th>
@@ -593,84 +596,124 @@ export default function Projections() {
                   <span title="Monthly contributions compounded monthly throughout the year">Contributions (Compounded)</span>
                 </th>
                 <th className="table-header px-6 py-4 text-right">Remaining Income</th>
-                <th className="table-header px-6 py-4 text-right">Ending Balance</th>
+                <th className="table-header px-6 py-4 text-right">
+                  <span title="Combined brokerage + retirement ending balance">Ending Balance</span>
+                </th>
               </tr>
             </thead>
             <tbody>
-              {projections?.projections?.map((p, index) => (
-                <tr 
-                  key={p.calendarYear} 
-                  className={`hover:bg-midnight-800/30 transition-colors ${p.yearOffset === years ? 'bg-accent-500/5' : ''}`}
-                >
-                  <td className="table-cell px-6 font-medium text-white">
-                    {p.calendarYear}
-                    {p.yearOffset === 0 && <span className="text-xs text-midnight-400 ml-2">(Current)</span>}
-                  </td>
-                  <td className="table-cell px-6 text-right font-mono text-midnight-200">
-                    {formatCurrencyFull(p.startingBalance)}
-                  </td>
-                  <td className="table-cell px-6 text-right font-mono text-gain">
-                    {p.portfolioGrowth > 0 ? `+${formatCurrencyFull(p.portfolioGrowth)}` : '—'}
-                  </td>
-                  <td className="table-cell px-6 text-right">
-                    {p.yearOffset === 0 ? (
-                      <span className="text-midnight-500">—</span>
-                    ) : editingYear === p.calendarYear ? (
-                      <div className="flex items-center justify-end gap-2">
-                        <span className="text-midnight-400">$</span>
-                        <input
-                          type="number"
-                          value={editValue}
-                          onChange={(e) => setEditValue(e.target.value)}
-                          onKeyDown={(e) => e.key === 'Enter' && saveContribution(p.calendarYear)}
-                          className="input-field w-24 text-right py-1 px-2"
-                          autoFocus
-                        />
-                        <button
-                          onClick={() => saveContribution(p.calendarYear)}
-                          className="p-1 rounded hover:bg-accent-500/20 text-accent-400"
-                        >
-                          <Check className="w-4 h-4" />
-                        </button>
-                      </div>
-                    ) : (
-                      <div className="flex items-center justify-end gap-2">
-                        <span className="font-mono text-accent-400">
-                          {p.monthlyContribution > 0 ? `$${p.monthlyContribution.toLocaleString()}/mo` : '—'}
-                        </span>
-                        <button
-                          onClick={() => startEditingContribution(p.calendarYear, p.monthlyContribution)}
-                          className="p-1 rounded hover:bg-midnight-700/50 text-midnight-400 hover:text-midnight-200"
-                        >
-                          <Edit3 className="w-3 h-3" />
-                        </button>
-                      </div>
-                    )}
-                  </td>
-                  <td className="table-cell px-6 text-right">
-                    {p.yearOffset === 0 || p.monthlyContribution === 0 ? (
-                      <span className="text-midnight-500">—</span>
-                    ) : (
+              {projections?.projections?.map((p, index) => {
+                // Calculate retirement starting balance (previous year's retirement ending value)
+                const prevRetirementValue = index > 0 
+                  ? (projections.projections[index - 1]?.retirementValue || 0)
+                  : (retirementSummary?.totalValue || 0);
+                const combinedStartingBalance = p.startingBalance + prevRetirementValue;
+                const combinedEndingBalance = p.combinedValue || (p.endingBalance + (p.retirementValue || 0));
+                
+                // Calculate combined growth (includes both brokerage and retirement growth)
+                const retirementGrowth = p.retirementGrowth || 0;
+                const combinedGrowth = p.portfolioGrowth + retirementGrowth;
+                
+                return (
+                  <tr 
+                    key={p.calendarYear} 
+                    className={`hover:bg-midnight-800/30 transition-colors ${p.yearOffset === years ? 'bg-accent-500/5' : ''}`}
+                  >
+                    <td className="table-cell px-6 font-medium text-white">
+                      {p.calendarYear}
+                      {p.yearOffset === 0 && <span className="text-xs text-midnight-400 ml-2">(Current)</span>}
+                    </td>
+                    <td className="table-cell px-6 text-right">
                       <div className="flex flex-col items-end">
-                        <span className="font-mono text-accent-400">
-                          {formatCurrencyFull(p.yearlyContributions)}
+                        <span className="font-mono text-midnight-200">
+                          {formatCurrencyFull(combinedStartingBalance)}
                         </span>
-                        {p.contributionGrowth > 0 && (
-                          <span className="text-xs text-midnight-400">
-                            ({formatCurrencyFull(p.rawContributions)} + {formatCurrencyFull(p.contributionGrowth)} growth)
-                          </span>
-                        )}
+                        <span className="text-xs text-midnight-500">
+                          {formatCurrency(p.startingBalance)} + {formatCurrency(prevRetirementValue)} ret
+                        </span>
                       </div>
-                    )}
-                  </td>
-                  <td className="table-cell px-6 text-right font-mono text-accent-400">
-                    {p.yearlyRemainingIncome > 0 ? `+${formatCurrencyFull(p.yearlyRemainingIncome)}` : '—'}
-                  </td>
-                  <td className="table-cell px-6 text-right font-mono font-medium text-gain">
-                    {formatCurrencyFull(p.endingBalance)}
-                  </td>
-                </tr>
-              ))}
+                    </td>
+                    <td className="table-cell px-6 text-right">
+                      {combinedGrowth > 0 ? (
+                        <div className="flex flex-col items-end">
+                          <span className="font-mono text-gain">+{formatCurrencyFull(combinedGrowth)}</span>
+                          {retirementGrowth > 0 && (
+                            <span className="text-xs text-midnight-500">
+                              {formatCurrency(p.portfolioGrowth)} + {formatCurrency(retirementGrowth)} ret
+                            </span>
+                          )}
+                        </div>
+                      ) : (
+                        <span className="text-midnight-500">—</span>
+                      )}
+                    </td>
+                    <td className="table-cell px-6 text-right">
+                      {p.yearOffset === 0 ? (
+                        <span className="text-midnight-500">—</span>
+                      ) : editingYear === p.calendarYear ? (
+                        <div className="flex items-center justify-end gap-2">
+                          <span className="text-midnight-400">$</span>
+                          <input
+                            type="number"
+                            value={editValue}
+                            onChange={(e) => setEditValue(e.target.value)}
+                            onKeyDown={(e) => e.key === 'Enter' && saveContribution(p.calendarYear)}
+                            className="input-field w-24 text-right py-1 px-2"
+                            autoFocus
+                          />
+                          <button
+                            onClick={() => saveContribution(p.calendarYear)}
+                            className="p-1 rounded hover:bg-accent-500/20 text-accent-400"
+                          >
+                            <Check className="w-4 h-4" />
+                          </button>
+                        </div>
+                      ) : (
+                        <div className="flex items-center justify-end gap-2">
+                          <span className="font-mono text-accent-400">
+                            {p.monthlyContribution > 0 ? `$${p.monthlyContribution.toLocaleString()}/mo` : '—'}
+                          </span>
+                          <button
+                            onClick={() => startEditingContribution(p.calendarYear, p.monthlyContribution)}
+                            className="p-1 rounded hover:bg-midnight-700/50 text-midnight-400 hover:text-midnight-200"
+                          >
+                            <Edit3 className="w-3 h-3" />
+                          </button>
+                        </div>
+                      )}
+                    </td>
+                    <td className="table-cell px-6 text-right">
+                      {p.yearOffset === 0 || p.monthlyContribution === 0 ? (
+                        <span className="text-midnight-500">—</span>
+                      ) : (
+                        <div className="flex flex-col items-end">
+                          <span className="font-mono text-accent-400">
+                            {formatCurrencyFull(p.yearlyContributions)}
+                          </span>
+                          {p.contributionGrowth > 0 && (
+                            <span className="text-xs text-midnight-400">
+                              ({formatCurrencyFull(p.rawContributions)} + {formatCurrencyFull(p.contributionGrowth)} growth)
+                            </span>
+                          )}
+                        </div>
+                      )}
+                    </td>
+                    <td className="table-cell px-6 text-right font-mono text-accent-400">
+                      {p.yearlyRemainingIncome > 0 ? `+${formatCurrencyFull(p.yearlyRemainingIncome)}` : '—'}
+                    </td>
+                    <td className="table-cell px-6 text-right">
+                      <div className="flex flex-col items-end">
+                        <span className="font-mono font-medium text-gain">
+                          {formatCurrencyFull(combinedEndingBalance)}
+                        </span>
+                        <span className="text-xs text-midnight-500">
+                          {formatCurrency(p.endingBalance)} + {formatCurrency(p.retirementValue || 0)} ret
+                        </span>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>
