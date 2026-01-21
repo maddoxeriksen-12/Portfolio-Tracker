@@ -43,6 +43,7 @@ A comprehensive portfolio tracking application for managing crypto and equity in
 ### Backend
 - **Node.js** with Express.js
 - **PostgreSQL** database
+- **Redis** for high-performance caching
 - **Alpha Vantage API** for market data
 - JWT authentication
 - Deployed on **Railway**
@@ -77,12 +78,15 @@ npm install
 3. Create a `.env` file based on the example:
 ```env
 DATABASE_URL=postgresql://username:password@localhost:5432/portfolio_tracker
+REDIS_URL=redis://localhost:6379
 JWT_SECRET=your-super-secret-jwt-key
 ALPHA_VANTAGE_API_KEY=your-alpha-vantage-api-key
 PORT=3001
 NODE_ENV=development
 FRONTEND_URL=http://localhost:5173
 ```
+
+> **Note:** Redis is optional for local development. If `REDIS_URL` is not set, the app will use an in-memory cache fallback.
 
 4. Run database migrations:
 ```bash
@@ -124,14 +128,18 @@ npm run dev
 
 1. Create a new project on [Railway](https://railway.app)
 2. Add a PostgreSQL database
-3. Connect your GitHub repository
-4. Set environment variables:
+3. **Add a Redis database** for caching (click "New" → "Database" → "Redis")
+4. Connect your GitHub repository
+5. Set environment variables:
    - `DATABASE_URL` (from Railway PostgreSQL)
+   - `REDIS_URL` (from Railway Redis - automatically available as `REDIS_URL`)
    - `JWT_SECRET`
    - `ALPHA_VANTAGE_API_KEY`
    - `FRONTEND_URL` (your Vercel URL)
    - `NODE_ENV=production`
-5. Railway will automatically deploy on push
+6. Railway will automatically deploy on push
+
+> **Note:** Redis is optional but highly recommended for performance. Without Redis, the app will use an in-memory cache fallback which works but doesn't persist across restarts.
 
 ### Frontend (Vercel)
 
@@ -179,7 +187,12 @@ npm run dev
 - `GET /api/expenses/categories` - Get categories
 
 ### Portfolio
-- `GET /api/portfolio/overview` - Portfolio overview
+- `GET /api/portfolio/overview` - Portfolio overview (cached)
+- `GET /api/portfolio/overview?quick=true` - Quick overview using cache only (fastest)
+- `GET /api/portfolio/overview?refresh=true` - Force refresh from API
+- `GET /api/portfolio/daily-return` - Today's return (cached, very fast)
+- `POST /api/portfolio/refresh` - Refresh all prices from API
+- `GET /api/portfolio/cache-status` - Check cache health
 - `GET /api/portfolio/returns` - Returns by timeframe
 - `GET /api/portfolio/projections` - Future projections
 - `POST /api/portfolio/projections/cagr/:assetId` - Set CAGR

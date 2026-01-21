@@ -6,11 +6,17 @@ const authMiddleware = require('../middleware/auth');
 // All routes require authentication
 router.use(authMiddleware);
 
-// Portfolio overview
+// Portfolio overview (supports ?quick=true for cache-only, ?refresh=true for force refresh)
 router.get('/overview', portfolioController.getPortfolioOverview);
+
+// Quick daily return - uses cached data only, no API calls (fast endpoint)
+router.get('/daily-return', portfolioController.getQuickDailyReturn);
 
 // Refresh all asset prices (triggers API calls)
 router.post('/refresh', portfolioController.refreshPrices);
+
+// Cache status (for debugging)
+router.get('/cache-status', portfolioController.getCacheStatus);
 
 // Returns by timeframe
 router.get('/returns', portfolioController.getReturns);

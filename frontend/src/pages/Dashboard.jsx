@@ -72,9 +72,12 @@ export default function Dashboard() {
     overview, 
     assets, 
     fetchOverview, 
+    fetchQuickDailyReturn,
     refreshPrices,
     fetchReturns, 
     isLoading,
+    isRefreshing,
+    hasStaleData,
     retirementAccounts,
     retirementSummary,
     fetchRetirementAccounts,
@@ -111,8 +114,11 @@ export default function Dashboard() {
   const [showTodayReturnModal, setShowTodayReturnModal] = useState(false);
 
   useEffect(() => {
+    // Fetch data in parallel for faster initial load
+    // Overview uses cached data first, then updates if needed
     fetchOverview();
     fetchRetirementAccounts();
+    fetchQuickDailyReturn(); // Fast endpoint for today's return
     loadReturns('1Y');
   }, []);
 
@@ -311,15 +317,20 @@ export default function Dashboard() {
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
           <h1 className="text-2xl lg:text-3xl font-display font-bold text-white">Dashboard</h1>
-          <p className="text-midnight-400 mt-1">Your portfolio at a glance</p>
+          <p className="text-midnight-400 mt-1">
+            Your portfolio at a glance
+            {hasStaleData && (
+              <span className="ml-2 text-xs text-warning">• Some prices may be stale</span>
+            )}
+          </p>
         </div>
         <button
           onClick={() => { refreshPrices(); fetchRetirementAccounts(); }}
-          disabled={isLoading}
+          disabled={isRefreshing}
           className="btn-secondary flex items-center gap-2"
         >
-          <RefreshCw className={`w-4 h-4 ${isLoading ? 'animate-spin' : ''}`} />
-          Refresh
+          <RefreshCw className={`w-4 h-4 ${isRefreshing ? 'animate-spin' : ''}`} />
+          {isRefreshing ? 'Refreshing...' : 'Refresh'}
         </button>
       </div>
 

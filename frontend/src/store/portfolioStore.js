@@ -13,29 +13,48 @@ const usePortfolioStore = create((set, get) => ({
   projections: null,
   retirementAccounts: [],
   retirementSummary: null,
+  dailyReturn: null,
   
   // UI state
   isLoading: false,
+  isRefreshing: false,
   error: null,
+  hasStaleData: false,
 
-  // Fetch portfolio overview
-  fetchOverview: async () => {
+  // Fetch portfolio overview (uses cached data first for speed)
+  fetchOverview: async (quick = false) => {
     set({ isLoading: true });
     try {
-      const response = await api.get('/portfolio/overview');
+      const url = quick ? '/portfolio/overview?quick=true' : '/portfolio/overview';
+      const response = await api.get(url);
       set({ 
         overview: response.data.overview, 
         assets: response.data.assets,
+        hasStaleData: response.data.hasStaleData || false,
         isLoading: false 
       });
+      return response.data;
     } catch (error) {
       set({ error: error.response?.data?.error || 'Failed to fetch portfolio', isLoading: false });
+      return null;
+    }
+  },
+
+  // Fetch quick daily return (uses cached data only - very fast)
+  fetchQuickDailyReturn: async () => {
+    try {
+      const response = await api.get('/portfolio/daily-return');
+      set({ dailyReturn: response.data });
+      return response.data;
+    } catch (error) {
+      console.error('Failed to fetch daily return:', error);
+      return null;
     }
   },
 
   // Refresh all asset prices (triggers API calls to get latest data)
   refreshPrices: async () => {
-    set({ isLoading: true });
+    set({ isRefreshing: true });
     try {
       // First trigger the refresh endpoint to fetch fresh prices from API
       await api.post('/portfolio/refresh');
@@ -45,11 +64,13 @@ const usePortfolioStore = create((set, get) => ({
       set({ 
         overview: response.data.overview, 
         assets: response.data.assets,
+        hasStaleData: false,
+        isRefreshing: false,
         isLoading: false 
       });
       return { success: true };
     } catch (error) {
-      set({ error: error.response?.data?.error || 'Failed to refresh prices', isLoading: false });
+      set({ error: error.response?.data?.error || 'Failed to refresh prices', isRefreshing: false, isLoading: false });
       return { success: false, error: error.response?.data?.error };
     }
   },

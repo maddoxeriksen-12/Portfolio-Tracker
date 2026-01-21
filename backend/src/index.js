@@ -14,6 +14,9 @@ const expenseRoutes = require('./routes/expenses');
 const portfolioRoutes = require('./routes/portfolio');
 const retirementRoutes = require('./routes/retirement');
 
+// Import Redis cache service
+const redisCache = require('./services/redisCache');
+
 const app = express();
 const PORT = process.env.PORT || 3001;
 
@@ -163,8 +166,18 @@ app.use((err, req, res, next) => {
 // SERVER START
 // ===================
 
-app.listen(PORT, () => {
-  console.log(`
+// Initialize Redis and start server
+const startServer = async () => {
+  // Initialize Redis connection (non-blocking, will use local cache as fallback)
+  try {
+    await redisCache.connect();
+  } catch (error) {
+    console.log('⚠️  Redis connection failed, using in-memory cache fallback');
+  }
+
+  app.listen(PORT, () => {
+    const redisStatus = redisCache.isConnected ? '✅ Redis connected' : '⚠️  Redis fallback mode';
+    console.log(`
   ╔═══════════════════════════════════════════════════════╗
   ║                                                       ║
   ║   📊 Portfolio Tracker API                            ║
@@ -172,10 +185,27 @@ app.listen(PORT, () => {
   ║   Environment: ${process.env.NODE_ENV || 'development'}                       ║
   ║                                                       ║
   ║   🔒 Security: Helmet, Rate Limiting, CORS enabled    ║
+  ║   💾 Cache: ${redisStatus}                    
   ║   Allowed Origins: ${allowedOrigins.join(', ')}
   ║                                                       ║
   ╚═══════════════════════════════════════════════════════╝
-  `);
+    `);
+  });
+};
+
+// Graceful shutdown
+process.on('SIGTERM', async () => {
+  console.log('SIGTERM received, closing Redis connection...');
+  await redisCache.close();
+  process.exit(0);
 });
+
+process.on('SIGINT', async () => {
+  console.log('SIGINT received, closing Redis connection...');
+  await redisCache.close();
+  process.exit(0);
+});
+
+startServer();
 
 module.exports = app;
