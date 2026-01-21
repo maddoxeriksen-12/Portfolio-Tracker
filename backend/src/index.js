@@ -16,6 +16,9 @@ const portfolioRoutes = require('./routes/portfolio');
 const app = express();
 const PORT = process.env.PORT || 3001;
 
+// Trust proxy (required for Railway, Heroku, etc. to get real client IP for rate limiting)
+app.set('trust proxy', 1);
+
 // ===================
 // CORS CONFIGURATION (must be before other middleware)
 // ===================
@@ -74,16 +77,24 @@ const generalLimiter = rateLimit({
   max: 100,
   message: { error: 'Too many requests, please try again later' },
   standardHeaders: true,
-  legacyHeaders: false
+  legacyHeaders: false,
+  // Use X-Forwarded-For header for client identification behind proxies
+  keyGenerator: (req) => {
+    return req.ip || req.headers['x-forwarded-for']?.split(',')[0] || req.connection.remoteAddress;
+  }
 });
 
 // Stricter rate limit for auth endpoints
 const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 10,
+  max: 30, // Increased from 10 to allow for reasonable usage
   message: { error: 'Too many authentication attempts, please try again later' },
   standardHeaders: true,
-  legacyHeaders: false
+  legacyHeaders: false,
+  // Use X-Forwarded-For header for client identification behind proxies
+  keyGenerator: (req) => {
+    return req.ip || req.headers['x-forwarded-for']?.split(',')[0] || req.connection.remoteAddress;
+  }
 });
 
 // Apply general rate limiting to all requests
