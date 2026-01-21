@@ -336,7 +336,6 @@ export default function Projections() {
               <tr className="border-b border-midnight-800/50">
                 <th className="table-header px-6 py-4">Year</th>
                 <th className="table-header px-6 py-4 text-right">Starting Balance</th>
-                <th className="table-header px-6 py-4 text-right">Portfolio Growth</th>
                 <th className="table-header px-6 py-4 text-right">Monthly Contribution</th>
                 <th className="table-header px-6 py-4 text-right">
                   <span title="Monthly contributions compounded monthly throughout the year">Contributions (Compounded)</span>
@@ -357,9 +356,6 @@ export default function Projections() {
                   </td>
                   <td className="table-cell px-6 text-right font-mono text-midnight-200">
                     {formatCurrencyFull(p.startingBalance)}
-                  </td>
-                  <td className="table-cell px-6 text-right font-mono text-gain">
-                    {p.portfolioGrowth > 0 ? `+${formatCurrencyFull(p.portfolioGrowth)}` : '—'}
                   </td>
                   <td className="table-cell px-6 text-right">
                     {p.yearOffset === 0 ? (
