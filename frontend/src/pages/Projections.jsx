@@ -336,8 +336,11 @@ export default function Projections() {
               <tr className="border-b border-midnight-800/50">
                 <th className="table-header px-6 py-4">Year</th>
                 <th className="table-header px-6 py-4 text-right">Starting Balance</th>
+                <th className="table-header px-6 py-4 text-right">Portfolio Growth</th>
                 <th className="table-header px-6 py-4 text-right">Monthly Contribution</th>
-                <th className="table-header px-6 py-4 text-right">Yearly Income</th>
+                <th className="table-header px-6 py-4 text-right">
+                  <span title="Monthly contributions compounded monthly throughout the year">Contributions (Compounded)</span>
+                </th>
                 <th className="table-header px-6 py-4 text-right">Remaining Income</th>
                 <th className="table-header px-6 py-4 text-right">Ending Balance</th>
               </tr>
@@ -354,6 +357,9 @@ export default function Projections() {
                   </td>
                   <td className="table-cell px-6 text-right font-mono text-midnight-200">
                     {formatCurrencyFull(p.startingBalance)}
+                  </td>
+                  <td className="table-cell px-6 text-right font-mono text-gain">
+                    {p.portfolioGrowth > 0 ? `+${formatCurrencyFull(p.portfolioGrowth)}` : '—'}
                   </td>
                   <td className="table-cell px-6 text-right">
                     {p.yearOffset === 0 ? (
@@ -390,8 +396,21 @@ export default function Projections() {
                       </div>
                     )}
                   </td>
-                  <td className="table-cell px-6 text-right font-mono text-midnight-300">
-                    {formatCurrencyFull(p.yearlyIncome)}
+                  <td className="table-cell px-6 text-right">
+                    {p.yearOffset === 0 || p.monthlyContribution === 0 ? (
+                      <span className="text-midnight-500">—</span>
+                    ) : (
+                      <div className="flex flex-col items-end">
+                        <span className="font-mono text-accent-400">
+                          {formatCurrencyFull(p.yearlyContributions)}
+                        </span>
+                        {p.contributionGrowth > 0 && (
+                          <span className="text-xs text-midnight-400">
+                            ({formatCurrencyFull(p.rawContributions)} + {formatCurrencyFull(p.contributionGrowth)} growth)
+                          </span>
+                        )}
+                      </div>
+                    )}
                   </td>
                   <td className="table-cell px-6 text-right font-mono text-accent-400">
                     {p.yearlyRemainingIncome > 0 ? `+${formatCurrencyFull(p.yearlyRemainingIncome)}` : '—'}
@@ -451,8 +470,12 @@ export default function Projections() {
       <div className="glass-card p-6 border-l-4 border-accent-500">
         <h4 className="text-sm font-semibold text-white mb-2">About These Projections</h4>
         <p className="text-sm text-midnight-300">
-          Income is calculated from your income records in the Income section—add future income sources with start dates 
-          to model promotions and salary changes. Remaining Income = Yearly Income - Expenses - Contributions. 
+          <strong>Monthly Compounding:</strong> Both your portfolio and contributions compound monthly using the average CAGR. 
+          Each monthly contribution grows for its remaining months in the year (Month 1 grows 11 months, Month 2 grows 10 months, etc.).
+          <br /><br />
+          <strong>Income:</strong> Calculated from your income records—add future income sources with start dates to model promotions. 
+          Remaining Income = Yearly Income - Expenses - Contributions.
+          <br /><br />
           Projections assume consistent growth and don't account for market volatility, inflation, or taxes.
         </p>
       </div>
