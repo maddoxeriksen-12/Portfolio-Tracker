@@ -366,15 +366,11 @@ export default function Projections() {
         <div className="h-80">
           <ResponsiveContainer width="100%" height="100%">
             {activeView === 'combined' ? (
-              <ComposedChart data={chartData}>
+              <AreaChart data={chartData}>
                 <defs>
-                  <linearGradient id="colorBrokerage" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="#2a97ff" stopOpacity={0.3} />
-                    <stop offset="95%" stopColor="#2a97ff" stopOpacity={0} />
-                  </linearGradient>
-                  <linearGradient id="colorRetirement" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="#8b5cf6" stopOpacity={0.3} />
-                    <stop offset="95%" stopColor="#8b5cf6" stopOpacity={0} />
+                  <linearGradient id="colorCombined" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%" stopColor="#10b981" stopOpacity={0.4} />
+                    <stop offset="95%" stopColor="#10b981" stopOpacity={0} />
                   </linearGradient>
                 </defs>
                 <XAxis 
@@ -396,29 +392,30 @@ export default function Projections() {
                     borderRadius: '12px',
                     color: '#d9e2ec'
                   }}
-                  formatter={(value, name) => [formatCurrencyFull(value), name === 'brokerage' ? 'Brokerage' : name === 'retirement' ? 'Retirement' : 'Combined']}
+                  formatter={(value, name, props) => {
+                    const data = props.payload;
+                    return [
+                      <div key="tooltip" className="space-y-1">
+                        <div className="font-semibold">{formatCurrencyFull(value)}</div>
+                        <div className="text-xs text-gray-400">
+                          Brokerage: {formatCurrencyFull(data.brokerage)} · Retirement: {formatCurrencyFull(data.retirement)}
+                        </div>
+                      </div>,
+                      'Combined Net Worth'
+                    ];
+                  }}
                   labelFormatter={(label) => `Year ${label}`}
                 />
                 <Legend />
                 <Area
                   type="monotone"
-                  dataKey="brokerage"
-                  name="Brokerage"
-                  stroke="#2a97ff"
+                  dataKey="combined"
+                  name="Combined Net Worth"
+                  stroke="#10b981"
                   strokeWidth={2}
-                  fill="url(#colorBrokerage)"
-                  stackId="1"
+                  fill="url(#colorCombined)"
                 />
-                <Area
-                  type="monotone"
-                  dataKey="retirement"
-                  name="Retirement"
-                  stroke="#8b5cf6"
-                  strokeWidth={2}
-                  fill="url(#colorRetirement)"
-                  stackId="1"
-                />
-              </ComposedChart>
+              </AreaChart>
             ) : activeView === 'brokerage' ? (
               <AreaChart data={chartData}>
                 <defs>
