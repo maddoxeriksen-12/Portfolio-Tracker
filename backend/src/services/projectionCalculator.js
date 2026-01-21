@@ -622,7 +622,7 @@ class ProjectionCalculatorService {
         yearOffset,
         calendarYear,
         totalValue: yearTotal,
-        yearlyContributions,
+        yearlyContributions: yearContributions,
         yearlyGrowth: yearGrowth
       });
     }
