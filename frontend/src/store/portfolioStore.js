@@ -33,6 +33,27 @@ const usePortfolioStore = create((set, get) => ({
     }
   },
 
+  // Refresh all asset prices (triggers API calls to get latest data)
+  refreshPrices: async () => {
+    set({ isLoading: true });
+    try {
+      // First trigger the refresh endpoint to fetch fresh prices from API
+      await api.post('/portfolio/refresh');
+      
+      // Then fetch the updated overview with the new prices
+      const response = await api.get('/portfolio/overview?refresh=true');
+      set({ 
+        overview: response.data.overview, 
+        assets: response.data.assets,
+        isLoading: false 
+      });
+      return { success: true };
+    } catch (error) {
+      set({ error: error.response?.data?.error || 'Failed to refresh prices', isLoading: false });
+      return { success: false, error: error.response?.data?.error };
+    }
+  },
+
   // Fetch transactions
   fetchTransactions: async (filters = {}) => {
     set({ isLoading: true });

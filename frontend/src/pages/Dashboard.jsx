@@ -72,6 +72,7 @@ export default function Dashboard() {
     overview, 
     assets, 
     fetchOverview, 
+    refreshPrices,
     fetchReturns, 
     isLoading,
     retirementAccounts,
@@ -118,9 +119,9 @@ export default function Dashboard() {
   // Recalculate today's return when overview and retirement data are available
   useEffect(() => {
     if (overview && retirementSummary !== undefined) {
-      loadTodayReturn();
+      calculateTodayReturn();
     }
-  }, [overview, retirementSummary]);
+  }, [overview, retirementSummary, assets]);
 
   const loadReturns = async (tf) => {
     setTimeframe(tf);
@@ -128,41 +129,54 @@ export default function Dashboard() {
     setReturns(data);
   };
 
-  const loadTodayReturn = async () => {
-    const data = await fetchReturns('1W');
-    // Estimate today's return as 1/5 of weekly for simplicity
-    // In a real app, you'd have daily price data
-    if (data?.returns) {
-      // Calculate breakdown by asset type
-      const stocksReturn = (data.returns.stocksReturn || 0) / 5;
-      const cryptoReturn = (data.returns.cryptoReturn || 0) / 5;
-      // Retirement accounts don't have daily market fluctuations in the same way
-      // Estimate retirement return based on average daily market movement
-      const retirementReturn = (retirementSummary?.totalValue || 0) * 0.0003; // ~0.03% daily average
-      
-      const totalReturn = stocksReturn + cryptoReturn + retirementReturn;
-      const totalNetWorth = (overview?.totalCurrentValue || 0) + (retirementSummary?.totalValue || 0);
-      const totalPercent = totalNetWorth > 0 ? (totalReturn / totalNetWorth) * 100 : 0;
-      
-      setTodayReturn({
-        value: totalReturn,
-        percent: totalPercent,
-        breakdown: {
-          stocks: {
-            value: stocksReturn,
-            percent: (overview?.stocksValue || 0) > 0 ? (stocksReturn / (overview?.stocksValue || 1)) * 100 : 0
-          },
-          crypto: {
-            value: cryptoReturn,
-            percent: (overview?.cryptoValue || 0) > 0 ? (cryptoReturn / (overview?.cryptoValue || 1)) * 100 : 0
-          },
-          retirement: {
-            value: retirementReturn,
-            percent: (retirementSummary?.totalValue || 0) > 0 ? (retirementReturn / (retirementSummary?.totalValue || 1)) * 100 : 0
-          }
+  // Calculate today's return using actual price change data from assets
+  const calculateTodayReturn = () => {
+    // Use actual daily change data from assets (populated by backend from market data)
+    const stocksDailyReturn = overview?.stocksDailyChange || 0;
+    const cryptoDailyReturn = overview?.cryptoDailyChange || 0;
+    
+    // Retirement accounts: keep using projected daily growth based on CAGR
+    // This represents expected growth, not market fluctuations
+    const retirementCagr = retirementSummary?.avgCagr || 7;
+    const dailyRetirementRate = Math.pow(1 + (retirementCagr / 100), 1/365) - 1;
+    const retirementReturn = (retirementSummary?.totalValue || 0) * dailyRetirementRate;
+    
+    const totalReturn = stocksDailyReturn + cryptoDailyReturn + retirementReturn;
+    const totalNetWorth = (overview?.totalCurrentValue || 0) + (retirementSummary?.totalValue || 0);
+    const previousNetWorth = totalNetWorth - totalReturn;
+    const totalPercent = previousNetWorth > 0 ? (totalReturn / previousNetWorth) * 100 : 0;
+    
+    // Calculate individual percentages based on previous day values
+    const previousStocksValue = (overview?.stocksValue || 0) - stocksDailyReturn;
+    const previousCryptoValue = (overview?.cryptoValue || 0) - cryptoDailyReturn;
+    const previousRetirementValue = (retirementSummary?.totalValue || 0) - retirementReturn;
+    
+    setTodayReturn({
+      value: totalReturn,
+      percent: totalPercent,
+      breakdown: {
+        stocks: {
+          value: stocksDailyReturn,
+          percent: previousStocksValue > 0 ? (stocksDailyReturn / previousStocksValue) * 100 : 0
+        },
+        crypto: {
+          value: cryptoDailyReturn,
+          percent: previousCryptoValue > 0 ? (cryptoDailyReturn / previousCryptoValue) * 100 : 0
+        },
+        retirement: {
+          value: retirementReturn,
+          percent: previousRetirementValue > 0 ? (retirementReturn / previousRetirementValue) * 100 : 0
         }
-      });
-    }
+      },
+      // Include per-asset breakdown for detailed view
+      assetBreakdown: assets?.map(asset => ({
+        symbol: asset.symbol,
+        assetType: asset.assetType,
+        dailyChange: asset.todayDollarChange || 0,
+        dailyChangePercent: asset.dailyChangePercent || 0,
+        currentValue: asset.currentValue
+      })) || []
+    });
   };
 
   const timeframes = ['1W', '1M', '3M', '6M', 'YTD', '1Y', '3Y', '5Y', 'ALL'];
@@ -300,7 +314,7 @@ export default function Dashboard() {
           <p className="text-midnight-400 mt-1">Your portfolio at a glance</p>
         </div>
         <button
-          onClick={() => { fetchOverview(); fetchRetirementAccounts(); loadTodayReturn(); }}
+          onClick={() => { refreshPrices(); fetchRetirementAccounts(); }}
           disabled={isLoading}
           className="btn-secondary flex items-center gap-2"
         >
@@ -1168,15 +1182,15 @@ export default function Dashboard() {
                   </div>
                 </div>
 
-                {/* Retirement */}
-                <div className="p-4 bg-midnight-800/50 rounded-xl border border-midnight-700/50">
+                {/* Retirement (Projected) */}
+                <div className="p-4 bg-midnight-800/50 rounded-xl border border-violet-500/30">
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-3">
                       <div className="p-2 rounded-lg bg-violet-500/10">
                         <Building2 className="w-5 h-5 text-violet-400" />
                       </div>
                       <div>
-                        <p className="font-medium text-white">Retirement</p>
+                        <p className="font-medium text-white">Retirement <span className="text-xs text-violet-400">(projected)</span></p>
                         <p className="text-xs text-midnight-400">
                           {formatCurrency(retirementSummary?.totalValue || 0)} total
                         </p>
@@ -1194,9 +1208,34 @@ export default function Dashboard() {
                 </div>
               </div>
 
+              {/* Per-Asset Breakdown */}
+              {todayReturn?.assetBreakdown && todayReturn.assetBreakdown.length > 0 && (
+                <div className="mt-4 pt-4 border-t border-midnight-700/50">
+                  <h4 className="text-sm font-medium text-midnight-300 mb-3">Per-Asset Breakdown</h4>
+                  <div className="space-y-2 max-h-40 overflow-y-auto">
+                    {todayReturn.assetBreakdown.map((asset, index) => (
+                      <div key={index} className="flex items-center justify-between p-2 bg-midnight-900/30 rounded-lg">
+                        <div className="flex items-center gap-2">
+                          <span className="text-sm font-medium text-white">{asset.symbol}</span>
+                          <span className="text-xs text-midnight-500">{asset.assetType}</span>
+                        </div>
+                        <div className="text-right">
+                          <p className={`text-sm font-mono ${(asset.dailyChange || 0) >= 0 ? 'text-gain' : 'text-loss'}`}>
+                            {(asset.dailyChange || 0) >= 0 ? '+' : ''}{formatCurrency(asset.dailyChange || 0)}
+                          </p>
+                          <p className={`text-xs ${(asset.dailyChangePercent || 0) >= 0 ? 'text-gain' : 'text-loss'}`}>
+                            {formatPercent(asset.dailyChangePercent || 0)}
+                          </p>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
               {/* Info note */}
               <p className="text-xs text-midnight-500 mt-4 text-center">
-                Returns are estimated based on weekly performance data. Retirement returns are estimated using average market growth.
+                Stock & crypto returns reflect actual market price changes. Retirement returns are projected based on CAGR. Click "Refresh" to fetch latest prices.
               </p>
 
               <button

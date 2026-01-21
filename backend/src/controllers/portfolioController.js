@@ -5,6 +5,13 @@ const projectionCalculator = require('../services/projectionCalculator');
 // Get portfolio overview
 exports.getPortfolioOverview = async (req, res) => {
   try {
+    const forceRefresh = req.query.refresh === 'true';
+    
+    // If force refresh, invalidate today's cache
+    if (forceRefresh) {
+      await alphaVantage.invalidateTodayCache();
+    }
+
     // Get holdings
     const holdings = await pool.query(
       `SELECT 
@@ -25,16 +32,24 @@ exports.getPortfolioOverview = async (req, res) => {
 
     let totalCostBasis = 0;
     let totalCurrentValue = 0;
+    let totalDailyChange = 0;
     const assets = [];
 
     for (const holding of holdings.rows) {
       let currentPrice = 0;
+      let dailyChange = 0;
+      let dailyChangePercent = 0;
+      
       try {
-        currentPrice = await alphaVantage.getPrice(
+        const priceData = await alphaVantage.getPriceWithChange(
           holding.asset_id,
           holding.symbol,
-          holding.asset_type
+          holding.asset_type,
+          forceRefresh
         );
+        currentPrice = priceData.price;
+        dailyChange = priceData.dailyChange;
+        dailyChangePercent = priceData.dailyChangePercent;
       } catch (error) {
         console.error(`Could not fetch price for ${holding.symbol}`);
       }
@@ -44,9 +59,13 @@ exports.getPortfolioOverview = async (req, res) => {
       const currentValue = quantity * currentPrice;
       const gainLoss = currentValue - costBasis;
       const gainLossPercent = costBasis > 0 ? (gainLoss / costBasis) * 100 : 0;
+      
+      // Calculate today's dollar change for this holding
+      const todayDollarChange = quantity * dailyChange;
 
       totalCostBasis += costBasis;
       totalCurrentValue += currentValue;
+      totalDailyChange += todayDollarChange;
 
       assets.push({
         assetId: holding.asset_id,
@@ -60,7 +79,11 @@ exports.getPortfolioOverview = async (req, res) => {
         gainLoss,
         gainLossPercent,
         allocation: 0, // Will calculate after
-        firstPurchase: holding.first_purchase
+        firstPurchase: holding.first_purchase,
+        // Daily change data
+        dailyChange,
+        dailyChangePercent,
+        todayDollarChange
       });
     }
 
@@ -72,6 +95,8 @@ exports.getPortfolioOverview = async (req, res) => {
     // Calculate totals by asset type
     const stocksValue = assets.filter(a => a.assetType === 'STOCK').reduce((sum, a) => sum + a.currentValue, 0);
     const cryptoValue = assets.filter(a => a.assetType === 'CRYPTO').reduce((sum, a) => sum + a.currentValue, 0);
+    const stocksDailyChange = assets.filter(a => a.assetType === 'STOCK').reduce((sum, a) => sum + a.todayDollarChange, 0);
+    const cryptoDailyChange = assets.filter(a => a.assetType === 'CRYPTO').reduce((sum, a) => sum + a.todayDollarChange, 0);
 
     res.json({
       overview: {
@@ -83,13 +108,78 @@ exports.getPortfolioOverview = async (req, res) => {
         cryptoValue,
         stocksAllocation: totalCurrentValue > 0 ? (stocksValue / totalCurrentValue) * 100 : 0,
         cryptoAllocation: totalCurrentValue > 0 ? (cryptoValue / totalCurrentValue) * 100 : 0,
-        assetCount: assets.length
+        assetCount: assets.length,
+        // Daily change totals
+        totalDailyChange,
+        totalDailyChangePercent: totalCurrentValue > 0 ? (totalDailyChange / (totalCurrentValue - totalDailyChange)) * 100 : 0,
+        stocksDailyChange,
+        cryptoDailyChange
       },
       assets
     });
   } catch (error) {
     console.error('Portfolio overview error:', error);
     res.status(500).json({ error: 'Failed to get portfolio overview' });
+  }
+};
+
+// Refresh all asset prices - triggers API calls to get latest prices
+exports.refreshPrices = async (req, res) => {
+  try {
+    // Get all holdings for this user
+    const holdings = await pool.query(
+      `SELECT 
+         a.id as asset_id,
+         a.symbol,
+         a.asset_type
+       FROM tax_lots tl
+       JOIN assets a ON tl.asset_id = a.id
+       WHERE tl.user_id = $1 AND tl.remaining_quantity > 0
+       GROUP BY a.id, a.symbol, a.asset_type`,
+      [req.user.id]
+    );
+
+    if (holdings.rows.length === 0) {
+      return res.json({ 
+        message: 'No assets to refresh',
+        refreshedCount: 0,
+        assets: []
+      });
+    }
+
+    // Map holdings to the format expected by refreshPrices
+    const assetsToRefresh = holdings.rows.map(h => ({
+      assetId: h.asset_id,
+      symbol: h.symbol,
+      assetType: h.asset_type
+    }));
+
+    // Refresh prices for all assets (this will make API calls)
+    const refreshedPrices = await alphaVantage.refreshPrices(assetsToRefresh);
+
+    // Build response with success/failure status
+    const successful = refreshedPrices.filter(p => p.success);
+    const failed = refreshedPrices.filter(p => !p.success);
+
+    res.json({
+      message: `Refreshed ${successful.length} of ${refreshedPrices.length} assets`,
+      refreshedCount: successful.length,
+      failedCount: failed.length,
+      timestamp: new Date().toISOString(),
+      assets: refreshedPrices.map(p => ({
+        symbol: p.symbol,
+        assetType: p.assetType,
+        price: p.price,
+        dailyChange: p.dailyChange,
+        dailyChangePercent: p.dailyChangePercent,
+        previousClose: p.previousClose,
+        success: p.success,
+        error: p.error
+      }))
+    });
+  } catch (error) {
+    console.error('Refresh prices error:', error);
+    res.status(500).json({ error: 'Failed to refresh prices' });
   }
 };
 

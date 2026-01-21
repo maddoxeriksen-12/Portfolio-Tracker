@@ -154,52 +154,163 @@ class AlphaVantageService {
 
   // Get price with caching
   async getPrice(assetId, symbol, assetType) {
+    const priceData = await this.getPriceWithChange(assetId, symbol, assetType);
+    return priceData.price;
+  }
+
+  // Get price with daily change data and caching
+  async getPriceWithChange(assetId, symbol, assetType, forceRefresh = false) {
     const today = new Date().toISOString().split('T')[0];
     
-    // Check cache first
-    const cached = await pool.query(
-      'SELECT price FROM price_cache WHERE asset_id = $1 AND price_date = $2',
-      [assetId, today]
-    );
-
-    if (cached.rows.length > 0) {
-      return parseFloat(cached.rows[0].price);
-    }
-
-    // Fetch fresh price
-    let price;
-    try {
-      if (assetType === 'STOCK') {
-        const quote = await this.getStockQuote(symbol);
-        price = quote.price;
-      } else {
-        const quote = await this.getCryptoQuote(symbol);
-        price = quote.price;
-      }
-
-      // Cache the price
-      await pool.query(
-        `INSERT INTO price_cache (asset_id, price, price_date) 
-         VALUES ($1, $2, $3) 
-         ON CONFLICT (asset_id, price_date) DO UPDATE SET price = $2, fetched_at = CURRENT_TIMESTAMP`,
-        [assetId, price, today]
+    // Check cache first (unless force refresh)
+    if (!forceRefresh) {
+      const cached = await pool.query(
+        'SELECT price, daily_change, daily_change_percent, previous_close FROM price_cache WHERE asset_id = $1 AND price_date = $2',
+        [assetId, today]
       );
 
-      return price;
+      if (cached.rows.length > 0) {
+        return {
+          price: parseFloat(cached.rows[0].price),
+          dailyChange: parseFloat(cached.rows[0].daily_change) || 0,
+          dailyChangePercent: parseFloat(cached.rows[0].daily_change_percent) || 0,
+          previousClose: parseFloat(cached.rows[0].previous_close) || 0
+        };
+      }
+    }
+
+    // Fetch fresh price from API
+    let price, dailyChange = 0, dailyChangePercent = 0, previousClose = 0;
+    try {
+      if (assetType === 'STOCK') {
+        // Stock: GLOBAL_QUOTE gives us change from previous close directly
+        const quote = await this.getStockQuote(symbol);
+        price = quote.price;
+        dailyChange = quote.change || 0;
+        dailyChangePercent = quote.changePercent || 0;
+        previousClose = price - dailyChange; // Calculate previous close from current price and change
+      } else {
+        // Crypto: Get current price and calculate change from previous close
+        const quote = await this.getCryptoQuote(symbol);
+        price = quote.price;
+        
+        // Get previous close from yesterday's cache or most recent cache
+        const yesterday = new Date();
+        yesterday.setDate(yesterday.getDate() - 1);
+        const yesterdayStr = yesterday.toISOString().split('T')[0];
+        
+        // First try yesterday's close
+        let prevCacheResult = await pool.query(
+          'SELECT price FROM price_cache WHERE asset_id = $1 AND price_date = $2',
+          [assetId, yesterdayStr]
+        );
+        
+        // If no yesterday cache, get most recent before today
+        if (prevCacheResult.rows.length === 0) {
+          prevCacheResult = await pool.query(
+            'SELECT price FROM price_cache WHERE asset_id = $1 AND price_date < $2 ORDER BY price_date DESC LIMIT 1',
+            [assetId, today]
+          );
+        }
+        
+        if (prevCacheResult.rows.length > 0) {
+          previousClose = parseFloat(prevCacheResult.rows[0].price);
+          dailyChange = price - previousClose;
+          dailyChangePercent = previousClose > 0 ? ((price - previousClose) / previousClose) * 100 : 0;
+        }
+      }
+
+      // Cache the price with change data
+      await pool.query(
+        `INSERT INTO price_cache (asset_id, price, daily_change, daily_change_percent, previous_close, price_date) 
+         VALUES ($1, $2, $3, $4, $5, $6) 
+         ON CONFLICT (asset_id, price_date) DO UPDATE SET 
+           price = $2, 
+           daily_change = $3, 
+           daily_change_percent = $4, 
+           previous_close = $5,
+           fetched_at = CURRENT_TIMESTAMP`,
+        [assetId, price, dailyChange, dailyChangePercent, previousClose, today]
+      );
+
+      return { price, dailyChange, dailyChangePercent, previousClose };
     } catch (error) {
       console.error(`Error fetching price for ${symbol}:`, error.message);
       
       // Return most recent cached price if available
       const lastCached = await pool.query(
-        'SELECT price FROM price_cache WHERE asset_id = $1 ORDER BY price_date DESC LIMIT 1',
+        'SELECT price, daily_change, daily_change_percent, previous_close FROM price_cache WHERE asset_id = $1 ORDER BY price_date DESC LIMIT 1',
         [assetId]
       );
       
       if (lastCached.rows.length > 0) {
-        return parseFloat(lastCached.rows[0].price);
+        return {
+          price: parseFloat(lastCached.rows[0].price),
+          dailyChange: parseFloat(lastCached.rows[0].daily_change) || 0,
+          dailyChangePercent: parseFloat(lastCached.rows[0].daily_change_percent) || 0,
+          previousClose: parseFloat(lastCached.rows[0].previous_close) || 0
+        };
       }
       
       throw error;
+    }
+  }
+
+  // Refresh prices for multiple assets - fetches fresh data from API
+  async refreshPrices(assets) {
+    const today = new Date().toISOString().split('T')[0];
+    
+    // First, delete today's cache for all these assets to force fresh fetch
+    const assetIds = assets.map(a => a.assetId);
+    if (assetIds.length > 0) {
+      await pool.query(
+        'DELETE FROM price_cache WHERE asset_id = ANY($1) AND price_date = $2',
+        [assetIds, today]
+      );
+    }
+
+    // Now fetch fresh prices for each asset
+    const results = [];
+    for (const asset of assets) {
+      try {
+        const priceData = await this.getPriceWithChange(
+          asset.assetId,
+          asset.symbol,
+          asset.assetType,
+          true // force refresh
+        );
+        results.push({
+          ...asset,
+          ...priceData,
+          success: true
+        });
+      } catch (error) {
+        console.error(`Failed to refresh price for ${asset.symbol}:`, error.message);
+        results.push({
+          ...asset,
+          price: 0,
+          dailyChange: 0,
+          dailyChangePercent: 0,
+          previousClose: 0,
+          success: false,
+          error: error.message
+        });
+      }
+    }
+
+    return results;
+  }
+
+  // Invalidate cache for specific assets (used when refresh button is clicked)
+  async invalidateTodayCache(assetIds = null) {
+    const today = new Date().toISOString().split('T')[0];
+    if (assetIds && assetIds.length > 0) {
+      await pool.query(
+        'DELETE FROM price_cache WHERE asset_id = ANY($1) AND price_date = $2',
+        [assetIds, today]
+      );
+    } else {
+      await pool.query('DELETE FROM price_cache WHERE price_date = $1', [today]);
     }
   }
 

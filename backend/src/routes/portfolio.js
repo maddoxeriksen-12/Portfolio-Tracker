@@ -9,6 +9,9 @@ router.use(authMiddleware);
 // Portfolio overview
 router.get('/overview', portfolioController.getPortfolioOverview);
 
+// Refresh all asset prices (triggers API calls)
+router.post('/refresh', portfolioController.refreshPrices);
+
 // Returns by timeframe
 router.get('/returns', portfolioController.getReturns);
 
