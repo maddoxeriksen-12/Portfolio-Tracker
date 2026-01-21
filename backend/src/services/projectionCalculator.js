@@ -128,6 +128,7 @@ class ProjectionCalculatorService {
           yearlyIncome: yearlyIncome,
           yearlyExpenses: yearlyExpenses,
           yearlyRemainingIncome: 0,
+          portfolioGrowth: 0,
           endingBalance: startingBalance,
           monthlyContribution: 0,
           assetValues
@@ -136,8 +137,11 @@ class ProjectionCalculatorService {
         // Future years: Calculate based on previous year's ending balance
         const startingBalance = previousEndingBalance;
         
-        // Ending balance = starting balance + compounded contributions + remaining income
-        const endingBalance = startingBalance + compoundedContributions + thisYearRemainingIncome;
+        // Growth on starting balance (compounded monthly over 12 months)
+        const portfolioGrowth = startingBalance * (Math.pow(1 + monthlyRate, 12) - 1);
+        
+        // Ending balance = starting balance grown monthly + compounded contributions + remaining income
+        const endingBalance = startingBalance + portfolioGrowth + compoundedContributions + thisYearRemainingIncome;
         
         previousEndingBalance = endingBalance;
         
@@ -151,6 +155,7 @@ class ProjectionCalculatorService {
           yearlyIncome: yearlyIncome,
           yearlyExpenses: yearlyExpenses,
           yearlyRemainingIncome: thisYearRemainingIncome,
+          portfolioGrowth: portfolioGrowth,
           endingBalance: endingBalance,
           monthlyContribution: monthlyContribution,
           assetValues
