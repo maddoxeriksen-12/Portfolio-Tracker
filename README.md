@@ -6,32 +6,32 @@ A comprehensive portfolio tracking application for managing crypto and equity in
 
 ## Features
 
-### 📊 Portfolio Management
+### Portfolio Management
 - Track stocks and cryptocurrency holdings
 - Record buy and sell transactions
 - Real-time price data from Alpha Vantage API
 - Portfolio allocation visualization
 - Performance tracking by asset and timeframe
 
-### 💰 Tax Reporting
+### Tax Reporting
 - **FIFO cost basis tracking** - Automatically tracks cost basis using First-In-First-Out method
 - **Short-term vs Long-term gains** - Separates gains by holding period (< 1 year vs ≥ 1 year)
 - **Tax lot management** - View individual purchase lots and their cost basis
 - **Realized gains report** - Track taxable events by year
 
-### 💵 Income Tracking
+### Income Tracking
 - Multiple income sources with different frequencies
 - Before and after-tax calculations
 - Annual and monthly income summaries
 - Effective tax rate calculations
 
-### 📝 Expense Tracking
+###  Expense Tracking
 - Line-by-line expense entry
 - Categorized expenses with custom colors
 - Monthly P&L style breakdown
 - Visual charts for spending patterns
 
-### 📈 Future Projections
+###  Future Projections
 - User-defined CAGR estimates per asset
 - Adjustable time horizons (1-30 years)
 - Include monthly contributions
