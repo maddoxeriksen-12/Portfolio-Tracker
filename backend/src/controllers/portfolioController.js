@@ -3,50 +3,125 @@ const alphaVantage = require('../services/alphaVantage');
 const projectionCalculator = require('../services/projectionCalculator');
 const redisCache = require('../services/redisCache');
 
-// Get portfolio overview - OPTIMIZED with batch caching
+// Helper to build portfolio response from holdings and prices
+const buildPortfolioResponse = (holdings, pricesMap) => {
+  let totalCostBasis = 0;
+  let totalCurrentValue = 0;
+  let totalDailyChange = 0;
+  const assets = [];
+  let hasStaleData = false;
+  let hasMissingPrices = false;
+
+  for (const holding of holdings) {
+    const priceData = pricesMap.get(holding.asset_id) || {
+      price: 0,
+      dailyChange: 0,
+      dailyChangePercent: 0,
+      previousClose: 0,
+      missing: true
+    };
+
+    if (priceData.missing) hasMissingPrices = true;
+    if (priceData.stale) hasStaleData = true;
+
+    const currentPrice = priceData.price || 0;
+    const dailyChange = priceData.dailyChange || 0;
+    const dailyChangePercent = priceData.dailyChangePercent || 0;
+
+    const quantity = parseFloat(holding.quantity);
+    const costBasis = parseFloat(holding.cost_basis);
+    const currentValue = quantity * currentPrice;
+    const gainLoss = currentValue - costBasis;
+    const gainLossPercent = costBasis > 0 ? (gainLoss / costBasis) * 100 : 0;
+    const todayDollarChange = quantity * dailyChange;
+
+    totalCostBasis += costBasis;
+    totalCurrentValue += currentValue;
+    totalDailyChange += todayDollarChange;
+
+    assets.push({
+      assetId: holding.asset_id,
+      symbol: holding.symbol,
+      name: holding.name,
+      assetType: holding.asset_type,
+      quantity,
+      costBasis,
+      currentPrice,
+      currentValue,
+      gainLoss,
+      gainLossPercent,
+      allocation: 0,
+      firstPurchase: holding.first_purchase,
+      dailyChange,
+      dailyChangePercent,
+      todayDollarChange,
+      stale: priceData.stale || false,
+      missing: priceData.missing || false
+    });
+  }
+
+  // Calculate allocations
+  assets.forEach(asset => {
+    asset.allocation = totalCurrentValue > 0 ? (asset.currentValue / totalCurrentValue) * 100 : 0;
+  });
+
+  // Calculate totals by asset type
+  const stocksValue = assets.filter(a => a.assetType === 'STOCK').reduce((sum, a) => sum + a.currentValue, 0);
+  const cryptoValue = assets.filter(a => a.assetType === 'CRYPTO').reduce((sum, a) => sum + a.currentValue, 0);
+  const stocksDailyChange = assets.filter(a => a.assetType === 'STOCK').reduce((sum, a) => sum + a.todayDollarChange, 0);
+  const cryptoDailyChange = assets.filter(a => a.assetType === 'CRYPTO').reduce((sum, a) => sum + a.todayDollarChange, 0);
+
+  const overview = {
+    totalCostBasis,
+    totalCurrentValue,
+    totalGainLoss: totalCurrentValue - totalCostBasis,
+    totalGainLossPercent: totalCostBasis > 0 ? ((totalCurrentValue - totalCostBasis) / totalCostBasis) * 100 : 0,
+    stocksValue,
+    cryptoValue,
+    stocksAllocation: totalCurrentValue > 0 ? (stocksValue / totalCurrentValue) * 100 : 0,
+    cryptoAllocation: totalCurrentValue > 0 ? (cryptoValue / totalCurrentValue) * 100 : 0,
+    assetCount: assets.length,
+    totalDailyChange,
+    totalDailyChangePercent: (totalCurrentValue - totalDailyChange) > 0 
+      ? (totalDailyChange / (totalCurrentValue - totalDailyChange)) * 100 
+      : 0,
+    stocksDailyChange,
+    cryptoDailyChange
+  };
+
+  return { overview, assets, hasStaleData, hasMissingPrices };
+};
+
+// Get holdings from database
+const getHoldings = async (userId) => {
+  const result = await pool.query(
+    `SELECT 
+       a.id as asset_id,
+       a.symbol,
+       a.name,
+       a.asset_type,
+       SUM(tl.remaining_quantity) as quantity,
+       SUM(tl.remaining_quantity * tl.cost_basis_per_unit) as cost_basis,
+       MIN(tl.purchase_date) as first_purchase
+     FROM tax_lots tl
+     JOIN assets a ON tl.asset_id = a.id
+     WHERE tl.user_id = $1 AND tl.remaining_quantity > 0
+     GROUP BY a.id, a.symbol, a.name, a.asset_type
+     ORDER BY SUM(tl.remaining_quantity * tl.cost_basis_per_unit) DESC`,
+    [userId]
+  );
+  return result.rows;
+};
+
+// Get portfolio overview - ALWAYS returns immediately with cached data
+// Never blocks waiting for API calls
 exports.getPortfolioOverview = async (req, res) => {
   try {
-    const forceRefresh = req.query.refresh === 'true';
-    const quickMode = req.query.quick === 'true'; // Use cached data only
-    
-    // If force refresh, invalidate today's cache
-    if (forceRefresh) {
-      await alphaVantage.invalidateTodayCache();
-      await redisCache.invalidateUserCache(req.user.id);
-    }
+    // Get holdings from database (fast)
+    const holdings = await getHoldings(req.user.id);
 
-    // Check for cached overview (only if not force refreshing)
-    if (!forceRefresh && !quickMode) {
-      const cachedOverview = await redisCache.getCachedOverview(req.user.id);
-      if (cachedOverview && Date.now() - cachedOverview.cachedAt < 60000) { // 1 minute cache
-        return res.json({
-          overview: cachedOverview.overview,
-          assets: cachedOverview.assets,
-          fromCache: true
-        });
-      }
-    }
-
-    // Get holdings
-    const holdings = await pool.query(
-      `SELECT 
-         a.id as asset_id,
-         a.symbol,
-         a.name,
-         a.asset_type,
-         SUM(tl.remaining_quantity) as quantity,
-         SUM(tl.remaining_quantity * tl.cost_basis_per_unit) as cost_basis,
-         MIN(tl.purchase_date) as first_purchase
-       FROM tax_lots tl
-       JOIN assets a ON tl.asset_id = a.id
-       WHERE tl.user_id = $1 AND tl.remaining_quantity > 0
-       GROUP BY a.id, a.symbol, a.name, a.asset_type
-       ORDER BY SUM(tl.remaining_quantity * tl.cost_basis_per_unit) DESC`,
-      [req.user.id]
-    );
-
-    if (holdings.rows.length === 0) {
-      const emptyResponse = {
+    if (holdings.length === 0) {
+      return res.json({
         overview: {
           totalCostBasis: 0,
           totalCurrentValue: 0,
@@ -62,116 +137,27 @@ exports.getPortfolioOverview = async (req, res) => {
           stocksDailyChange: 0,
           cryptoDailyChange: 0
         },
-        assets: []
-      };
-      return res.json(emptyResponse);
+        assets: [],
+        needsRefresh: false
+      });
     }
 
-    // Prepare assets for batch price lookup
-    const assetsForPriceLookup = holdings.rows.map(h => ({
+    // Get cached prices ONLY (no API calls) - this is always fast
+    const assetsForPriceLookup = holdings.map(h => ({
       assetId: h.asset_id,
       symbol: h.symbol,
       assetType: h.asset_type
     }));
 
-    // OPTIMIZED: Get all prices in batch (uses Redis cache first, then PostgreSQL, then API)
-    let pricesMap;
-    if (quickMode) {
-      // Only use cached data, no API calls
-      pricesMap = await alphaVantage.getCachedPricesOnly(assetsForPriceLookup);
-    } else {
-      // Full fetch with cache-first strategy
-      pricesMap = await alphaVantage.getPricesWithChangeBatch(assetsForPriceLookup, forceRefresh);
-    }
+    const pricesMap = await alphaVantage.getCachedPricesOnly(assetsForPriceLookup);
+    const response = buildPortfolioResponse(holdings, pricesMap);
 
-    let totalCostBasis = 0;
-    let totalCurrentValue = 0;
-    let totalDailyChange = 0;
-    const assets = [];
-
-    for (const holding of holdings.rows) {
-      const priceData = pricesMap.get(holding.asset_id) || {
-        price: 0,
-        dailyChange: 0,
-        dailyChangePercent: 0,
-        previousClose: 0
-      };
-
-      const currentPrice = priceData.price;
-      const dailyChange = priceData.dailyChange;
-      const dailyChangePercent = priceData.dailyChangePercent;
-
-      const quantity = parseFloat(holding.quantity);
-      const costBasis = parseFloat(holding.cost_basis);
-      const currentValue = quantity * currentPrice;
-      const gainLoss = currentValue - costBasis;
-      const gainLossPercent = costBasis > 0 ? (gainLoss / costBasis) * 100 : 0;
-      
-      // Calculate today's dollar change for this holding
-      const todayDollarChange = quantity * dailyChange;
-
-      totalCostBasis += costBasis;
-      totalCurrentValue += currentValue;
-      totalDailyChange += todayDollarChange;
-
-      assets.push({
-        assetId: holding.asset_id,
-        symbol: holding.symbol,
-        name: holding.name,
-        assetType: holding.asset_type,
-        quantity,
-        costBasis,
-        currentPrice,
-        currentValue,
-        gainLoss,
-        gainLossPercent,
-        allocation: 0, // Will calculate after
-        firstPurchase: holding.first_purchase,
-        // Daily change data
-        dailyChange,
-        dailyChangePercent,
-        todayDollarChange,
-        stale: priceData.stale || false
-      });
-    }
-
-    // Calculate allocations
-    assets.forEach(asset => {
-      asset.allocation = totalCurrentValue > 0 ? (asset.currentValue / totalCurrentValue) * 100 : 0;
-    });
-
-    // Calculate totals by asset type
-    const stocksValue = assets.filter(a => a.assetType === 'STOCK').reduce((sum, a) => sum + a.currentValue, 0);
-    const cryptoValue = assets.filter(a => a.assetType === 'CRYPTO').reduce((sum, a) => sum + a.currentValue, 0);
-    const stocksDailyChange = assets.filter(a => a.assetType === 'STOCK').reduce((sum, a) => sum + a.todayDollarChange, 0);
-    const cryptoDailyChange = assets.filter(a => a.assetType === 'CRYPTO').reduce((sum, a) => sum + a.todayDollarChange, 0);
-
-    const overview = {
-      totalCostBasis,
-      totalCurrentValue,
-      totalGainLoss: totalCurrentValue - totalCostBasis,
-      totalGainLossPercent: totalCostBasis > 0 ? ((totalCurrentValue - totalCostBasis) / totalCostBasis) * 100 : 0,
-      stocksValue,
-      cryptoValue,
-      stocksAllocation: totalCurrentValue > 0 ? (stocksValue / totalCurrentValue) * 100 : 0,
-      cryptoAllocation: totalCurrentValue > 0 ? (cryptoValue / totalCurrentValue) * 100 : 0,
-      assetCount: assets.length,
-      // Daily change totals
-      totalDailyChange,
-      totalDailyChangePercent: totalCurrentValue > 0 ? (totalDailyChange / (totalCurrentValue - totalDailyChange)) * 100 : 0,
-      stocksDailyChange,
-      cryptoDailyChange
-    };
-
-    // Cache the overview for quick access
-    if (!quickMode) {
-      await redisCache.cacheOverview(req.user.id, { overview, assets });
-    }
+    // Cache the response
+    await redisCache.cacheOverview(req.user.id, response);
 
     res.json({
-      overview,
-      assets,
-      hasStaleData: assets.some(a => a.stale)
+      ...response,
+      needsRefresh: response.hasMissingPrices || response.hasStaleData
     });
   } catch (error) {
     console.error('Portfolio overview error:', error);
@@ -297,6 +283,7 @@ exports.getQuickDailyReturn = async (req, res) => {
 };
 
 // Refresh all asset prices - triggers API calls to get latest prices
+// This is the ONLY endpoint that makes external API calls
 exports.refreshPrices = async (req, res) => {
   try {
     // Invalidate user's cached overview
@@ -359,7 +346,7 @@ exports.refreshPrices = async (req, res) => {
   }
 };
 
-// Get portfolio returns by timeframe - OPTIMIZED
+// Get portfolio returns by timeframe - uses cached prices only for fast response
 exports.getReturns = async (req, res) => {
   try {
     const { timeframe = '1Y' } = req.query;
@@ -441,14 +428,14 @@ exports.getReturns = async (req, res) => {
     let costBasis = 0;
 
     if (holdings.rows.length > 0) {
-      // OPTIMIZED: Get all prices in batch
+      // Get cached prices ONLY (no API calls) - fast response
       const assetsForPriceLookup = holdings.rows.map(h => ({
         assetId: h.asset_id,
         symbol: h.symbol,
         assetType: h.asset_type
       }));
 
-      const pricesMap = await alphaVantage.getPricesWithChangeBatch(assetsForPriceLookup, false);
+      const pricesMap = await alphaVantage.getCachedPricesOnly(assetsForPriceLookup);
 
       for (const holding of holdings.rows) {
         const priceData = pricesMap.get(holding.asset_id);
@@ -496,7 +483,7 @@ exports.getReturns = async (req, res) => {
   }
 };
 
-// Get returns by asset - OPTIMIZED
+// Get returns by asset - uses cached prices only
 exports.getReturnsByAsset = async (req, res) => {
   try {
     const { assetIds } = req.query;
@@ -529,14 +516,14 @@ exports.getReturnsByAsset = async (req, res) => {
       return res.json({ assetReturns: [] });
     }
 
-    // OPTIMIZED: Get all prices in batch
+    // Get cached prices ONLY (no API calls)
     const assetsForPriceLookup = holdings.rows.map(h => ({
       assetId: h.asset_id,
       symbol: h.symbol,
       assetType: h.asset_type
     }));
 
-    const pricesMap = await alphaVantage.getPricesWithChangeBatch(assetsForPriceLookup, false);
+    const pricesMap = await alphaVantage.getCachedPricesOnly(assetsForPriceLookup);
 
     // Get realized gains for all assets in one query
     const assetIdList = holdings.rows.map(h => h.asset_id);
@@ -594,20 +581,16 @@ exports.getProjections = async (req, res) => {
   try {
     const { years = 10, yearlyContributions } = req.query;
 
-    // Parse yearlyContributions from JSON string to object
-    // Format: { "2026": 500, "2027": 750, ... }
     let contributionsMap = {};
     if (yearlyContributions) {
       try {
         contributionsMap = JSON.parse(yearlyContributions);
-        // Convert string keys to numbers and values to floats
         const parsed = {};
         for (const [year, amount] of Object.entries(contributionsMap)) {
           parsed[parseInt(year)] = parseFloat(amount) || 0;
         }
         contributionsMap = parsed;
       } catch (e) {
-        // If parsing fails, use empty object
         contributionsMap = {};
       }
     }

@@ -77,6 +77,7 @@ export default function Dashboard() {
     fetchReturns, 
     isLoading,
     isRefreshing,
+    needsRefresh,
     hasStaleData,
     retirementAccounts,
     retirementSummary,
@@ -319,18 +320,24 @@ export default function Dashboard() {
           <h1 className="text-2xl lg:text-3xl font-display font-bold text-white">Dashboard</h1>
           <p className="text-midnight-400 mt-1">
             Your portfolio at a glance
-            {hasStaleData && (
-              <span className="ml-2 text-xs text-warning">• Some prices may be stale</span>
+            {isRefreshing && (
+              <span className="ml-2 text-xs text-accent-400">• Updating prices...</span>
+            )}
+            {!isRefreshing && needsRefresh && (
+              <span className="ml-2 text-xs text-warning">• Click refresh for latest prices</span>
+            )}
+            {!isRefreshing && hasStaleData && !needsRefresh && (
+              <span className="ml-2 text-xs text-midnight-500">• Some prices may be stale</span>
             )}
           </p>
         </div>
         <button
           onClick={() => { refreshPrices(); fetchRetirementAccounts(); }}
           disabled={isRefreshing}
-          className="btn-secondary flex items-center gap-2"
+          className={`btn-secondary flex items-center gap-2 ${needsRefresh && !isRefreshing ? 'ring-2 ring-warning/50' : ''}`}
         >
           <RefreshCw className={`w-4 h-4 ${isRefreshing ? 'animate-spin' : ''}`} />
-          {isRefreshing ? 'Refreshing...' : 'Refresh'}
+          {isRefreshing ? 'Updating...' : needsRefresh ? 'Load Prices' : 'Refresh'}
         </button>
       </div>
 

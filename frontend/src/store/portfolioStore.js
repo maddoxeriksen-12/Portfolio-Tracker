@@ -19,20 +19,27 @@ const usePortfolioStore = create((set, get) => ({
   isLoading: false,
   isRefreshing: false,
   error: null,
+  needsRefresh: false,
   hasStaleData: false,
 
-  // Fetch portfolio overview (uses cached data first for speed)
-  fetchOverview: async (quick = false) => {
+  // Fetch portfolio overview - always fast, uses cached data
+  fetchOverview: async () => {
     set({ isLoading: true });
     try {
-      const url = quick ? '/portfolio/overview?quick=true' : '/portfolio/overview';
-      const response = await api.get(url);
+      const response = await api.get('/portfolio/overview');
       set({ 
         overview: response.data.overview, 
         assets: response.data.assets,
+        needsRefresh: response.data.needsRefresh || false,
         hasStaleData: response.data.hasStaleData || false,
         isLoading: false 
       });
+      
+      // If missing prices and not already refreshing, auto-trigger a background refresh
+      if (response.data.needsRefresh && !get().isRefreshing) {
+        get().refreshPricesBackground();
+      }
+      
       return response.data;
     } catch (error) {
       set({ error: error.response?.data?.error || 'Failed to fetch portfolio', isLoading: false });
@@ -52,23 +59,50 @@ const usePortfolioStore = create((set, get) => ({
     }
   },
 
-  // Refresh all asset prices (triggers API calls to get latest data)
-  refreshPrices: async () => {
+  // Background refresh - doesn't block UI, updates when done
+  refreshPricesBackground: async () => {
+    if (get().isRefreshing) return; // Prevent double refresh
+    
     set({ isRefreshing: true });
     try {
-      // First trigger the refresh endpoint to fetch fresh prices from API
       await api.post('/portfolio/refresh');
-      
-      // Then fetch the updated overview with the new prices
-      const response = await api.get('/portfolio/overview?refresh=true');
+      // Fetch updated overview after refresh completes
+      const response = await api.get('/portfolio/overview');
       set({ 
         overview: response.data.overview, 
         assets: response.data.assets,
+        needsRefresh: false,
+        hasStaleData: false,
+        isRefreshing: false 
+      });
+    } catch (error) {
+      console.error('Background refresh failed:', error);
+      set({ isRefreshing: false });
+    }
+  },
+
+  // Manual refresh - user-triggered, shows loading state
+  refreshPrices: async () => {
+    set({ isRefreshing: true });
+    try {
+      // Trigger the refresh endpoint
+      const refreshResult = await api.post('/portfolio/refresh');
+      
+      // Then fetch the updated overview
+      const response = await api.get('/portfolio/overview');
+      set({ 
+        overview: response.data.overview, 
+        assets: response.data.assets,
+        needsRefresh: false,
         hasStaleData: false,
         isRefreshing: false,
         isLoading: false 
       });
-      return { success: true };
+      return { 
+        success: true, 
+        refreshedCount: refreshResult.data.refreshedCount,
+        failedCount: refreshResult.data.failedCount
+      };
     } catch (error) {
       set({ error: error.response?.data?.error || 'Failed to refresh prices', isRefreshing: false, isLoading: false });
       return { success: false, error: error.response?.data?.error };
@@ -203,8 +237,6 @@ const usePortfolioStore = create((set, get) => ({
   },
 
   // Fetch projections
-  // yearlyContributions: object mapping calendar year to monthly contribution
-  // e.g., { 2026: 500, 2027: 750 }
   fetchProjections: async (years = 10, yearlyContributions = {}) => {
     try {
       const contributionsParam = encodeURIComponent(JSON.stringify(yearlyContributions));
